@@ -24,10 +24,13 @@ License: MIT
 import asyncio
 import logging
 from os import getenv
+import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+
+from src.logging_setup import configure_logging
 
 import src.database as db
 from src.handlers import router
@@ -35,11 +38,8 @@ from src.handlers import router
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
-# Настройка логирования с уровнем INFO для отслеживания работы бота
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Настройка логирования (консоль + файл)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -80,6 +80,12 @@ async def main():
     
     # Регистрация маршрутизатора с обработчиками команд и callback'ов
     dp.include_router(router)
+
+    # Глобальный обработчик ошибок - логируем все необработанные исключения
+    async def _on_error(update, exception):
+        logger.exception("Unhandled exception while processing update: %s", exception)
+
+    dp.errors.register(_on_error)
     
     # Удаление старых webhooks и ожидающих обновлений
     # Важно для чистого запуска polling после использования webhooks

@@ -51,6 +51,9 @@ def get_main_menu_keyboard(is_shift_open: bool = False) -> InlineKeyboardMarkup:
         # Смена открыта - показываем кнопки для работы с кальянами
         buttons.append([InlineKeyboardButton(text="➕ Добавить кальян", callback_data="add_hookah")])
         buttons.append([InlineKeyboardButton(text="📋 Текущие кальяны", callback_data="current_hookahs")])
+        # Вступить в смену / взять менеджера
+        buttons.append([InlineKeyboardButton(text="👥 Вступить в смену", callback_data="join_shift")])
+        buttons.append([InlineKeyboardButton(text="👤 Взять менеджера", callback_data="take_manager")])
         buttons.append([InlineKeyboardButton(text="🔒 Закрыть смену", callback_data="close_shift")])
     else:
         # Смена закрыта - показываем кнопку для открытия

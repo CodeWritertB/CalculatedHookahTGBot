@@ -76,6 +76,28 @@ def init_db() -> None:
             FOREIGN KEY (shift_id) REFERENCES shifts(id)
         )
     ''')
+
+    # Таблица пользователей (Telegram user_id, username и т.д.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            created_at TEXT NOT NULL
+        )
+    ''')
+
+    # Таблица участников смены: кто в смене и кто менеджер
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS shift_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shift_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            joined_at TEXT NOT NULL,
+            FOREIGN KEY (shift_id) REFERENCES shifts(id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -379,5 +401,111 @@ def delete_hookah(hookah_id: int):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM hookahs WHERE id = ?", (hookah_id,))
+    conn.commit()
+    conn.close()
+
+
+# ==================== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ ПОЛЬЗОВАТЕЛЯМИ И СМЕНАМИ ====================
+
+def add_user_if_not_exists(user_id: int, username: str = None) -> None:
+    """Добавить пользователя в таблицу users если его там нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)",
+        (user_id, username, now)
+    )
+    # Обновляем username если изменился
+    if username:
+        cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
+    conn.commit()
+    conn.close()
+
+
+def assign_user_to_shift(shift_id: int, user_id: int, role: str) -> Tuple[bool, str]:
+    """Назначить пользователя в смену с ролью 'manager' или 'member'.
+
+    Возвращает (True, msg) при успехе или (False, error_message) при ошибке.
+    Ограничения: один менеджер на смену; максимум 2 members на смену.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Проверяем существование смены
+    cursor.execute("SELECT id FROM shifts WHERE id = ? AND is_open = 1", (shift_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return False, "Смена не найдена или закрыта"
+
+    # Если роль manager, проверяем что менеджера нет
+    if role == "manager":
+        cursor.execute(
+            "SELECT COUNT(*) FROM shift_members WHERE shift_id = ? AND role = 'manager'",
+            (shift_id,)
+        )
+        if cursor.fetchone()[0] > 0:
+            conn.close()
+            return False, "У смены уже есть менеджер"
+
+    # Если роль member, проверяем лимит
+    if role == "member":
+        cursor.execute(
+            "SELECT COUNT(*) FROM shift_members WHERE shift_id = ? AND role = 'member'",
+            (shift_id,)
+        )
+        if cursor.fetchone()[0] >= 2:
+            conn.close()
+            return False, "В смене уже максимум 2 человека"
+
+    # Проверяем что пользователь уже не в смене
+    cursor.execute(
+        "SELECT COUNT(*) FROM shift_members WHERE shift_id = ? AND user_id = ?",
+        (shift_id, user_id)
+    )
+    if cursor.fetchone()[0] > 0:
+        conn.close()
+        return False, "Вы уже в этой смене"
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO shift_members (shift_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)",
+        (shift_id, user_id, role, now)
+    )
+    conn.commit()
+    conn.close()
+    return True, "OK"
+
+
+def get_shift_users(shift_id: int) -> List[Tuple]:
+    """Вернуть список участников смены: (user_id, username, role, joined_at)"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT sm.user_id, u.username, sm.role, sm.joined_at FROM shift_members sm LEFT JOIN users u ON sm.user_id = u.user_id WHERE sm.shift_id = ?",
+        (shift_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_shift_user_role(shift_id: int, user_id: int) -> Optional[str]:
+    """Вернуть роль пользователя в смене или None."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT role FROM shift_members WHERE shift_id = ? AND user_id = ?",
+        (shift_id, user_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def remove_user_from_shift(shift_id: int, user_id: int) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM shift_members WHERE shift_id = ? AND user_id = ?", (shift_id, user_id))
     conn.commit()
     conn.close()

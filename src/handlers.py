@@ -317,6 +317,15 @@ async def cmd_current_hookahs(callback: CallbackQuery):
         await callback.answer()
         return
     
+    # Проверяем принадлежность пользователя к смене (manager или member)
+    role = db.get_shift_user_role(shift[0], callback.from_user.id)
+    if not role:
+        await callback.message.edit_text(
+            "⛔ Вы не участвуете в текущей смене. Вступите в смену, чтобы видеть список кальянов."
+        )
+        await callback.answer()
+        return
+
     # Получаем кальяны за смену
     hookahs = db.get_hookahs_by_shift(shift[0])
     
@@ -340,6 +349,59 @@ async def cmd_current_hookahs(callback: CallbackQuery):
         reply_markup=get_hookahs_list_keyboard(hookahs, shift[0])
     )
     await callback.answer()
+
+
+
+@router.callback_query(F.data == "join_shift")
+async def cmd_join_shift(callback: CallbackQuery):
+    """Handler для вступления пользователя в текущую смену как member."""
+    shift = get_current_shift()
+    if not shift:
+        await callback.message.edit_text("⚠️ Нет открытой смены.")
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name or ""
+    db.add_user_if_not_exists(user_id, username)
+    success, msg = db.assign_user_to_shift(shift[0], user_id, "member")
+    if not success:
+        await callback.message.edit_text(f"⚠️ {msg}")
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "✅ Вы успешно вступили в смену! Теперь вы видите все кальяны этой смены.",
+        reply_markup=get_main_menu_keyboard(True)
+    )
+    await callback.answer()
+    logger.info(f"User {user_id} joined shift #{shift[0]} as member")
+
+
+@router.callback_query(F.data == "take_manager")
+async def cmd_take_manager(callback: CallbackQuery):
+    """Handler для назначения пользователя менеджером текущей смены."""
+    shift = get_current_shift()
+    if not shift:
+        await callback.message.edit_text("⚠️ Нет открытой смены.")
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.full_name or ""
+    db.add_user_if_not_exists(user_id, username)
+    success, msg = db.assign_user_to_shift(shift[0], user_id, "manager")
+    if not success:
+        await callback.message.edit_text(f"⚠️ {msg}")
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "✅ Вы стали менеджером смены. Вам доступны все кальяны этой смены.",
+        reply_markup=get_main_menu_keyboard(True)
+    )
+    await callback.answer()
+    logger.info(f"User {user_id} assigned as manager for shift #{shift[0]}")
 
 
 @router.callback_query(F.data.startswith("view_"))
