@@ -1,0 +1,11 @@
+# ========================
+# Зависимости для Telegram бота "Счетчик кальянов"
+# ========================
+
+# Telegram Bot API Framework (asynchronous)
+# https://github.com/aiogram/aiogram
+aiogram==3.24.0
+
+# Environment variables management
+# https://github.com/theskumar/python-dotenv
+python-dotenv==1.0.1
