@@ -13,11 +13,14 @@ License: MIT
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 
 # Путь к файлу базы данных SQLite
 DB_PATH = "hookah_bot.db"
+
+# Временная зона Москвы UTC+3
+MOSCOW_TZ = timezone(timedelta(hours=3))
 
 
 def get_connection() -> sqlite3.Connection:
@@ -28,6 +31,16 @@ def get_connection() -> sqlite3.Connection:
         sqlite3.Connection: Объект соединения с БД
     """
     return sqlite3.connect(DB_PATH)
+
+
+def get_moscow_datetime() -> datetime:
+    """Возвращает текущее московское время."""
+    return datetime.now(MOSCOW_TZ)
+
+
+def get_moscow_now_str(fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """Возвращает текущее московское время в формате строки."""
+    return get_moscow_datetime().strftime(fmt)
 
 
 def init_db() -> None:
@@ -152,7 +165,7 @@ def add_column_if_not_exists(conn: sqlite3.Connection, table: str, definition: s
 def log_hookah_event(hookah_id: int, event_type: str, user_id: int = None, comment: str = None) -> None:
     conn = get_connection()
     cursor = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     cursor.execute(
         "INSERT INTO hookah_events (hookah_id, event_type, user_id, event_time, comment) VALUES (?, ?, ?, ?, ?)",
         (hookah_id, event_type, user_id, now, comment)
@@ -245,8 +258,8 @@ def open_shift() -> int:
     """
     conn = get_connection()
     cursor = conn.cursor()
-    # Получаем текущее время в формате YYYY-MM-DD HH:MM:SS
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Получаем текущее время в формате YYYY-MM-DD HH:MM:SS (МСК)
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     
     # Вставляем новую смену со статусом "открыта"
     cursor.execute(
@@ -275,8 +288,8 @@ def close_shift(shift_id: int) -> None:
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Получаем текущее время для записи времени закрытия
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Получаем текущее время для записи времени закрытия (МСК)
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     
     # Подсчитываем количество кальянов за смену
     cursor.execute(
@@ -362,7 +375,7 @@ def add_hookah(
     """
     conn = get_connection()
     cursor = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     cursor.execute(
         "INSERT INTO hookahs (shift_id, hookah_type, table_name, created_at, status, created_by, last_updated_at, last_updated_by, strength, coldness, order_comment) VALUES (?, ?, ?, ?, 'new_order', ?, ?, ?, ?, ?, ?)",
         (shift_id, hookah_type, table_name, now, created_by, now, created_by, strength, coldness, order_comment)
@@ -409,7 +422,7 @@ def update_hookah(
     """Обновить данные кальяна и записать событие."""
     conn = get_connection()
     cursor = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     if hookah_type is not None:
         cursor.execute(
             "UPDATE hookahs SET hookah_type = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
@@ -454,7 +467,7 @@ def set_hookah_status(hookah_id: int, status: str, user_id: int = None) -> None:
         'accepted': ("status = 'in_packing', accepted_by = ?, accepted_at = ?, last_updated_at = ?, last_updated_by = ?", ['accepted_by', 'accepted_at', 'last_updated_at', 'last_updated_by']),
         'ready': ("status = 'ready_for_guest', ready_at = ?, last_updated_at = ?, last_updated_by = ?", ['ready_at', 'last_updated_at', 'last_updated_by']),
     }
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     conn = get_connection()
     cursor = conn.cursor()
     if status == 'accepted':
@@ -479,7 +492,7 @@ def add_user_if_not_exists(user_id: int, username: str = None) -> None:
     """Добавить пользователя в таблицу users если его там нет."""
     conn = get_connection()
     cursor = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     cursor.execute(
         "INSERT OR IGNORE INTO users (user_id, username, created_at, notifications_enabled) VALUES (?, ?, ?, 1)",
         (user_id, username, now)
@@ -543,7 +556,7 @@ def assign_user_to_shift(shift_id: int, user_id: int, role: str) -> Tuple[bool, 
         conn.close()
         return False, "Вы уже в этой смене"
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     cursor.execute(
         "INSERT INTO shift_members (shift_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)",
         (shift_id, user_id, role, now)

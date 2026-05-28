@@ -91,7 +91,7 @@ def is_manager_or_admin(role: str) -> bool:
 
 
 def get_work_schedule_text() -> str:
-    weekday = datetime.now().weekday()
+    weekday = db.get_moscow_datetime().weekday()
     if weekday in (4, 5):
         today_text = "Пятница/Суббота"
         expected = "Менеджер + 2 кальянных мастера"
@@ -207,7 +207,7 @@ async def cmd_open_shift(callback: CallbackQuery):
     await callback.message.edit_text(
         f"✅ Смена успешно открыта!\n\n"
         f"🆔 ID смены: {shift_id}\n"
-        f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
+        f"⏰ Время: {db.get_moscow_datetime().strftime('%H:%M:%S')}\n\n"
         "Выберите действие:",
         reply_markup=get_main_menu_keyboard(True, is_admin(callback.from_user.id))
     )
@@ -275,7 +275,7 @@ async def cmd_confirm_close(callback: CallbackQuery):
     await callback.message.edit_text(
         f"✅ Смена успешно закрыта!\n\n"
         f"📊 Всего кальянов за смену: {total}\n"
-        f"🕐 Время закрытия: {datetime.now().strftime('%H:%M:%S')}\n\n"
+        f"🕐 Время закрытия: {db.get_moscow_datetime().strftime('%H:%M:%S')}\n\n"
         "Выберите действие:",
         reply_markup=get_main_menu_keyboard(False, is_admin(callback.from_user.id))
     )
@@ -437,7 +437,7 @@ async def process_hookah_comment(message: Message, state: FSMContext):
         order_comment=comment_text,
         created_by=user_id
     )
-    now = datetime.now().strftime("%H:%M:%S")
+    now = db.get_moscow_datetime().strftime("%H:%M:%S")
 
     await message.answer(
         f"✅ Кальян успешно добавлен!\n\n"
