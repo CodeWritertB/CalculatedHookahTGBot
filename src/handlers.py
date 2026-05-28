@@ -582,8 +582,40 @@ async def cmd_profile(callback: CallbackQuery):
     username = callback.from_user.username or callback.from_user.full_name or ""
     db.add_user_if_not_exists(user_id, username)
     enabled = db.get_notification_status(user_id)
+    stored_name = db.get_username(user_id) or username
+
+    shift = get_current_shift()
+    role = 'admin' if is_admin(user_id) else None
+    if not role and shift:
+        role = db.get_shift_user_role(shift[0], user_id)
+    role_label = ROLE_LABELS.get(role, 'Не в смене')
+
+    text = (
+        "👤 Профиль пользователя:\n\n"
+        f"Статус: {role_label}\n"
+        f"Имя: {stored_name}\n\n"
+    )
+
+    if role == 'hookah_master':
+        your_shift_hookahs, standard_hookahs, cigar_hookahs, total_hookahs = db.get_user_master_hookah_stats(user_id)
+        text += (
+            f"📌 Кальянов в твоих сменах: {your_shift_hookahs}\n"
+            f"   🌿 Стандарт: {standard_hookahs}\n"
+            f"   🚬 Сигара: {cigar_hookahs}\n"
+            f"📊 Всего кальянов в системе: {total_hookahs}\n\n"
+        )
+    else:
+        text += "📌 Статистика кальянов доступна только кальянным мастерам.\n\n"
+
+    total_shifts, month_shifts = db.get_user_shift_stats(user_id)
+    text += (
+        f"📆 Смен всего: {total_shifts}\n"
+        f"📅 За месяц: {month_shifts}\n\n"
+        "Вы можете включить или выключить уведомления о новых кальянах."
+    )
+
     await callback.message.edit_text(
-        "👤 Профиль пользователя:\n\nВы можете включить или выключить уведомления о новых кальянах.",
+        text,
         reply_markup=get_profile_keyboard(enabled, is_admin(user_id))
     )
     await callback.answer()

@@ -224,6 +224,75 @@ def set_notification_status(user_id: int, enabled: bool) -> None:
     conn.close()
 
 
+def get_user_hookah_stats(user_id: int) -> Tuple[int, int, int]:
+    """Получить статистику кальянов по пользователю."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM hookahs WHERE created_by = ?",
+        (user_id,)
+    )
+    total = cursor.fetchone()[0] or 0
+    cursor.execute(
+        "SELECT hookah_type, COUNT(*) FROM hookahs WHERE created_by = ? GROUP BY hookah_type",
+        (user_id,)
+    )
+    counts = {row[0]: row[1] for row in cursor.fetchall()}
+    conn.close()
+    standard = counts.get('Стандарт', 0)
+    cigar = counts.get('Сигара', 0)
+    return total, standard, cigar
+
+
+def get_user_shift_stats(user_id: int) -> Tuple[int, int]:
+    """Получить количество смен пользователя всего и за текущий месяц."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(DISTINCT shift_id) FROM shift_members WHERE user_id = ?",
+        (user_id,)
+    )
+    total_shifts = cursor.fetchone()[0] or 0
+    month_key = get_moscow_datetime().strftime('%Y-%m')
+    cursor.execute(
+        "SELECT COUNT(DISTINCT sm.shift_id) "
+        "FROM shift_members sm "
+        "JOIN shifts s ON sm.shift_id = s.id "
+        "WHERE sm.user_id = ? AND substr(s.open_time, 1, 7) = ?",
+        (user_id, month_key)
+    )
+    month_shifts = cursor.fetchone()[0] or 0
+    conn.close()
+    return total_shifts, month_shifts
+
+
+def get_user_master_hookah_stats(user_id: int) -> Tuple[int, int, int, int]:
+    """Получить статистику кальянов для кальянного мастера."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(h.id) FROM hookahs h "
+        "JOIN shift_members sm ON h.shift_id = sm.shift_id "
+        "WHERE sm.user_id = ? AND sm.role = 'hookah_master'",
+        (user_id,)
+    )
+    your_shift_hookahs = cursor.fetchone()[0] or 0
+    cursor.execute(
+        "SELECT h.hookah_type, COUNT(*) FROM hookahs h "
+        "JOIN shift_members sm ON h.shift_id = sm.shift_id "
+        "WHERE sm.user_id = ? AND sm.role = 'hookah_master' "
+        "GROUP BY h.hookah_type",
+        (user_id,)
+    )
+    counts = {row[0]: row[1] for row in cursor.fetchall()}
+    standard = counts.get('Стандарт', 0)
+    cigar = counts.get('Сигара', 0)
+    cursor.execute("SELECT COUNT(*) FROM hookahs")
+    total_hookahs = cursor.fetchone()[0] or 0
+    conn.close()
+    return your_shift_hookahs, standard, cigar, total_hookahs
+
+
 # ==================== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ СМЕНАМИ ====================
 
 def get_current_shift() -> Optional[Tuple]:
