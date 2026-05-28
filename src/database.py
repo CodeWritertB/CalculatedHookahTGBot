@@ -50,6 +50,10 @@ def init_db() -> None:
         - hookah_type: Тип кальяна ("Стандарт" или "Сигара")
         - table_name: Название стола
         - created_at: Время добавления кальяна (YYYY-MM-DD HH:MM:SS)
+        - status: Статус заказа (new_order, in_packing, ready_for_guest)
+        - strength: Сила кальяна (1-10)
+        - coldness: Холодность кальяна
+        - order_comment: Комментарий к заказу
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -86,7 +90,7 @@ def init_db() -> None:
         )
     ''')
 
-    # Таблица участников смены: кто в смене и кто менеджер
+    # Таблица участников смены: кто в смене и какая роль
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS shift_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,7 +102,111 @@ def init_db() -> None:
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         )
     ''')
-    
+
+    # Таблица журнала событий кальянов
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS hookah_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hookah_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            user_id INTEGER,
+            event_time TEXT NOT NULL,
+            comment TEXT,
+            FOREIGN KEY (hookah_id) REFERENCES hookahs(id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
+
+    conn.commit()
+
+    # Дополняем таблицу hookahs новыми полями, если они отсутствуют
+    add_column_if_not_exists(conn, 'hookahs', 'status TEXT DEFAULT "new_order"')
+    add_column_if_not_exists(conn, 'hookahs', 'created_by INTEGER')
+    add_column_if_not_exists(conn, 'hookahs', 'accepted_by INTEGER')
+    add_column_if_not_exists(conn, 'hookahs', 'accepted_at TEXT')
+    add_column_if_not_exists(conn, 'hookahs', 'ready_at TEXT')
+    add_column_if_not_exists(conn, 'hookahs', 'last_updated_at TEXT')
+    add_column_if_not_exists(conn, 'hookahs', 'last_updated_by INTEGER')
+    add_column_if_not_exists(conn, 'hookahs', 'strength INTEGER DEFAULT 5')
+    add_column_if_not_exists(conn, 'hookahs', 'coldness TEXT DEFAULT "Средний"')
+    add_column_if_not_exists(conn, 'hookahs', 'order_comment TEXT')
+
+    # Дополняем таблицу users полем для уведомлений
+    add_column_if_not_exists(conn, 'users', 'notifications_enabled INTEGER DEFAULT 1')
+
+    conn.commit()
+    conn.close()
+
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ БАЗЫ ДАННЫХ ====================
+
+def add_column_if_not_exists(conn: sqlite3.Connection, table: str, definition: str) -> None:
+    cursor = conn.cursor()
+    column_name = definition.split()[0]
+    cursor.execute(f"PRAGMA table_info({table})")
+    columns = [row[1] for row in cursor.fetchall()]
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def log_hookah_event(hookah_id: int, event_type: str, user_id: int = None, comment: str = None) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO hookah_events (hookah_id, event_type, user_id, event_time, comment) VALUES (?, ?, ?, ?, ?)",
+        (hookah_id, event_type, user_id, now, comment)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_hookah_events(hookah_id: int) -> List[Tuple]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT he.event_type, u.username, he.event_time, he.comment"
+        " FROM hookah_events he"
+        " LEFT JOIN users u ON he.user_id = u.user_id"
+        " WHERE he.hookah_id = ?"
+        " ORDER BY he.event_time ASC",
+        (hookah_id,)
+    )
+    events = cursor.fetchall()
+    conn.close()
+    return events
+
+
+def get_users_with_notifications_enabled() -> List[int]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id FROM users WHERE notifications_enabled = 1"
+    )
+    rows = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_notification_status(user_id: int) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT notifications_enabled FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row[0]) if row else True
+
+
+def set_notification_status(user_id: int, enabled: bool) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET notifications_enabled = ? WHERE user_id = ?",
+        (1 if enabled else 0, user_id)
+    )
     conn.commit()
     conn.close()
 
@@ -228,52 +336,49 @@ def get_all_shifts() -> List[Tuple]:
 
 # ==================== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ КАЛЬЯНАМИ ====================
 
-def add_hookah(shift_id: int, hookah_type: str, table_name: str) -> int:
+def add_hookah(
+    shift_id: int,
+    hookah_type: str,
+    table_name: str,
+    strength: int = 5,
+    coldness: str = "Средний",
+    order_comment: str = None,
+    created_by: int = None
+) -> int:
     """
     Добавить кальян в текущую смену.
     
     Args:
         shift_id (int): ID смены
         hookah_type (str): Тип кальяна ("Стандарт" или "Сигара")
-        table_name (str): Название стола (1-7, "Большой бар", "Малый бар", "Стол у танцпола")
+        table_name (str): Название стола
+        strength (int): Сила кальяна от 1 до 10
+        coldness (str): Холодность кальяна
+        order_comment (str): Комментарий для заказа
+        created_by (int): user_id того, кто добавил кальян
         
     Returns:
         int: ID созданного кальяна
-        
-    Процесс:
-        - Записывается текущее время автоматически
-        - Создается новая запись в таблице hookahs
-        
-    Example:
-        hookah_id = add_hookah(1, "Стандарт", "1")
     """
     conn = get_connection()
     cursor = conn.cursor()
-    # Автоматически записываем текущее время
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     cursor.execute(
-        "INSERT INTO hookahs (shift_id, hookah_type, table_name, created_at) VALUES (?, ?, ?, ?)",
-        (shift_id, hookah_type, table_name, now)
+        "INSERT INTO hookahs (shift_id, hookah_type, table_name, created_at, status, created_by, last_updated_at, last_updated_by, strength, coldness, order_comment) VALUES (?, ?, ?, ?, 'new_order', ?, ?, ?, ?, ?, ?)",
+        (shift_id, hookah_type, table_name, now, created_by, now, created_by, strength, coldness, order_comment)
     )
     hookah_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    comment = f"Сила {strength}, Холодность {coldness}"
+    if order_comment:
+        comment += f", Комментарий: {order_comment}"
+    log_hookah_event(hookah_id, 'created', created_by, f"Добавлен кальян {hookah_type} на стол {table_name}. {comment}")
     return hookah_id
 
 
 def get_hookah_by_id(hookah_id: int) -> Optional[Tuple]:
-    """
-    Получить информацию о кальяне по ID.
-    
-    Args:
-        hookah_id (int): ID кальяна
-        
-    Returns:
-        Optional[Tuple]: Кортеж с данными кальяна или None если не найден
-        
-    Структура кортежа: (id, shift_id, hookah_type, table_name, created_at)
-    """
+    """Получить информацию о кальяне по ID."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM hookahs WHERE id = ?", (hookah_id,))
@@ -283,23 +388,9 @@ def get_hookah_by_id(hookah_id: int) -> Optional[Tuple]:
 
 
 def get_hookahs_by_shift(shift_id: int) -> List[Tuple]:
-    """
-    Получить все кальяны за конкретную смену.
-    
-    Args:
-        shift_id (int): ID смены
-        
-    Returns:
-        List[Tuple]: Список кортежей с данными кальянов
-        
-    Структура каждого кортежа: (id, shift_id, hookah_type, table_name, created_at)
-    
-    Сортировка:
-        По времени добавления (от ранних к поздним)
-    """
+    """Получить все кальяны за конкретную смену."""
     conn = get_connection()
     cursor = conn.cursor()
-    # Сортируем по времени добавления - ранние кальяны в начале
     cursor.execute(
         "SELECT * FROM hookahs WHERE shift_id = ? ORDER BY created_at ASC",
         (shift_id,)
@@ -312,65 +403,32 @@ def get_hookahs_by_shift(shift_id: int) -> List[Tuple]:
 def update_hookah(
     hookah_id: int,
     hookah_type: Optional[str] = None,
-    table_name: Optional[str] = None
+    table_name: Optional[str] = None,
+    updated_by: int = None
 ) -> None:
-    """
-    Обновить данные кальяна.
-    
-    Args:
-        hookah_id (int): ID кальяна
-        hookah_type (Optional[str]): Новый тип кальяна (если нужно изменить)
-        table_name (Optional[str]): Новое название стола (если нужно изменить)
-        
-    Процесс:
-        - Обновляет только переданные параметры
-        - Если параметр None, он не обновляется
-        
-    Example:
-        # Изменить только тип
-        update_hookah(5, hookah_type="Сигара")
-        
-        # Изменить только стол
-        update_hookah(5, table_name="Большой бар")
-        
-        # Изменить оба
-        update_hookah(5, "Стандарт", "2")
-    """
+    """Обновить данные кальяна и записать событие."""
     conn = get_connection()
     cursor = conn.cursor()
-    
-    # Обновляем тип кальяна если передан
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if hookah_type is not None:
         cursor.execute(
-            "UPDATE hookahs SET hookah_type = ? WHERE id = ?",
-            (hookah_type, hookah_id)
+            "UPDATE hookahs SET hookah_type = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
+            (hookah_type, now, updated_by, hookah_id)
         )
-    
-    # Обновляем стол если передан
+        log_hookah_event(hookah_id, 'updated_type', updated_by, f"Изменен тип на {hookah_type}")
     if table_name is not None:
         cursor.execute(
-            "UPDATE hookahs SET table_name = ? WHERE id = ?",
-            (table_name, hookah_id)
+            "UPDATE hookahs SET table_name = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
+            (table_name, now, updated_by, hookah_id)
         )
-    
+        log_hookah_event(hookah_id, 'updated_table', updated_by, f"Изменен стол на {table_name}")
     conn.commit()
     conn.close()
 
 
-def delete_hookah(hookah_id: int) -> None:
-    """
-    Удалить кальян из базы данных.
-    
-    Args:
-        hookah_id (int): ID кальяна для удаления
-        
-    Процесс:
-        - Удаляет запись из таблицы hookahs
-        - Внешний ключ гарантирует, что можно удалять только кальяны существующих смен
-        
-    Example:
-        delete_hookah(5)  # Удалить кальян с ID 5
-    """
+def delete_hookah(hookah_id: int, deleted_by: int = None) -> None:
+    """Удалить кальян из базы данных."""
+    log_hookah_event(hookah_id, 'deleted', deleted_by, 'Кальян удален')
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM hookahs WHERE id = ?", (hookah_id,))
@@ -378,29 +436,39 @@ def delete_hookah(hookah_id: int) -> None:
     conn.close()
 
 
-def update_hookah(hookah_id: int, hookah_type: str = None, table_name: str = None):
-    """Обновить кальян"""
+def delete_shift(shift_id: int) -> None:
+    """Удалить смену и все связанные данные из базы данных."""
     conn = get_connection()
     cursor = conn.cursor()
-    if hookah_type:
-        cursor.execute(
-            "UPDATE hookahs SET hookah_type = ? WHERE id = ?",
-            (hookah_type, hookah_id)
-        )
-    if table_name:
-        cursor.execute(
-            "UPDATE hookahs SET table_name = ? WHERE id = ?",
-            (table_name, hookah_id)
-        )
+    cursor.execute("DELETE FROM hookah_events WHERE hookah_id IN (SELECT id FROM hookahs WHERE shift_id = ?)", (shift_id,))
+    cursor.execute("DELETE FROM hookahs WHERE shift_id = ?", (shift_id,))
+    cursor.execute("DELETE FROM shift_members WHERE shift_id = ?", (shift_id,))
+    cursor.execute("DELETE FROM shifts WHERE id = ?", (shift_id,))
     conn.commit()
     conn.close()
 
 
-def delete_hookah(hookah_id: int):
-    """Удалить кальян"""
+def set_hookah_status(hookah_id: int, status: str, user_id: int = None) -> None:
+    """Установить статус кальяна и записать событие."""
+    status_fields = {
+        'accepted': ("status = 'in_packing', accepted_by = ?, accepted_at = ?, last_updated_at = ?, last_updated_by = ?", ['accepted_by', 'accepted_at', 'last_updated_at', 'last_updated_by']),
+        'ready': ("status = 'ready_for_guest', ready_at = ?, last_updated_at = ?, last_updated_by = ?", ['ready_at', 'last_updated_at', 'last_updated_by']),
+    }
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM hookahs WHERE id = ?", (hookah_id,))
+    if status == 'accepted':
+        cursor.execute(
+            "UPDATE hookahs SET status = 'in_packing', accepted_by = ?, accepted_at = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
+            (user_id, now, now, user_id, hookah_id)
+        )
+        log_hookah_event(hookah_id, 'accepted', user_id, 'Кальян принят мастером')
+    elif status == 'ready':
+        cursor.execute(
+            "UPDATE hookahs SET status = 'ready_for_guest', ready_at = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
+            (now, now, user_id, hookah_id)
+        )
+        log_hookah_event(hookah_id, 'ready', user_id, 'Кальян готов к выдаче')
     conn.commit()
     conn.close()
 
@@ -413,7 +481,7 @@ def add_user_if_not_exists(user_id: int, username: str = None) -> None:
     cursor = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute(
-        "INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO users (user_id, username, created_at, notifications_enabled) VALUES (?, ?, ?, 1)",
         (user_id, username, now)
     )
     # Обновляем username если изменился
@@ -424,11 +492,19 @@ def add_user_if_not_exists(user_id: int, username: str = None) -> None:
 
 
 def assign_user_to_shift(shift_id: int, user_id: int, role: str) -> Tuple[bool, str]:
-    """Назначить пользователя в смену с ролью 'manager' или 'member'.
+    """Назначить пользователя в смену с указанной ролью.
 
+    Допустимые роли:
+        - manager
+        - member
+        - hookah_master
+        - supervisor
     Возвращает (True, msg) при успехе или (False, error_message) при ошибке.
-    Ограничения: один менеджер на смену; максимум 2 members на смену.
     """
+    valid_roles = {'manager', 'member', 'hookah_master', 'supervisor'}
+    if role not in valid_roles:
+        return False, "Недопустимая роль. Доступны: manager, member, hookah_master, supervisor"
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -509,3 +585,12 @@ def remove_user_from_shift(shift_id: int, user_id: int) -> None:
     cursor.execute("DELETE FROM shift_members WHERE shift_id = ? AND user_id = ?", (shift_id, user_id))
     conn.commit()
     conn.close()
+
+
+def get_username(user_id: int) -> Optional[str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None

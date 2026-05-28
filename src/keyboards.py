@@ -26,42 +26,32 @@ TABLES = [
 # Типы кальянов
 HOOKAH_TYPES = ["Стандарт", "Сигара"]
 
+# Уровни силы кальяна
+STRENGTH_LEVELS = list(range(1, 11))
+
+# Варианты ледяной/тепловой подачи
+COLDNESS_OPTIONS = ["Холодный", "Средний", "Теплый"]
+
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
-def get_main_menu_keyboard(is_shift_open: bool = False) -> InlineKeyboardMarkup:
-    """
-    Получить главное меню бота с кнопками управления.
-    
-    Содержит разные кнопки в зависимости от того, открыта ли смена:
-    - Если смена открыта: добавить кальян, просмотр текущих кальянов, закрыть смену
-    - Если смена закрыта: открыть смену
-    - Всегда: история смен
-    
-    Args:
-        is_shift_open (bool): Статус смены (True - открыта, False - закрыта)
-        
-    Returns:
-        InlineKeyboardMarkup: Объект с кнопками главного меню
-    """
+def get_main_menu_keyboard(is_shift_open: bool = False, is_admin: bool = False) -> InlineKeyboardMarkup:
+    """Получить главное меню бота с кнопками управления."""
     buttons = []
-    
-    # Кнопки отличаются в зависимости от статуса смены
     if is_shift_open:
-        # Смена открыта - показываем кнопки для работы с кальянами
         buttons.append([InlineKeyboardButton(text="➕ Добавить кальян", callback_data="add_hookah")])
         buttons.append([InlineKeyboardButton(text="📋 Текущие кальяны", callback_data="current_hookahs")])
-        # Вступить в смену / взять менеджера
         buttons.append([InlineKeyboardButton(text="👥 Вступить в смену", callback_data="join_shift")])
-        buttons.append([InlineKeyboardButton(text="👤 Взять менеджера", callback_data="take_manager")])
+        buttons.append([InlineKeyboardButton(text="⚙️ Профиль", callback_data="profile")])
+        if is_admin:
+            buttons.append([InlineKeyboardButton(text="🛠️ Админка", callback_data="admin_panel")])
         buttons.append([InlineKeyboardButton(text="🔒 Закрыть смену", callback_data="close_shift")])
     else:
-        # Смена закрыта - показываем кнопку для открытия
         buttons.append([InlineKeyboardButton(text="🔓 Открыть смену", callback_data="open_shift")])
-    
-    # История смен доступна всегда
+        buttons.append([InlineKeyboardButton(text="⚙️ Профиль", callback_data="profile")])
+        if is_admin:
+            buttons.append([InlineKeyboardButton(text="🛠️ Админка", callback_data="admin_panel")])
     buttons.append([InlineKeyboardButton(text="📊 История смен", callback_data="history")])
-    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -125,6 +115,25 @@ def get_tables_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_strength_keyboard() -> InlineKeyboardMarkup:
+    """Получить клавиатуру выбора силы кальяна от 1 до 10."""
+    buttons = []
+    for i in range(0, len(STRENGTH_LEVELS), 2):
+        row = [InlineKeyboardButton(text=str(STRENGTH_LEVELS[i]), callback_data=f"strength_{STRENGTH_LEVELS[i]}")]
+        if i + 1 < len(STRENGTH_LEVELS):
+            row.append(InlineKeyboardButton(text=str(STRENGTH_LEVELS[i + 1]), callback_data=f"strength_{STRENGTH_LEVELS[i + 1]}"))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_coldness_keyboard() -> InlineKeyboardMarkup:
+    """Получить клавиатуру выбора степени холодности кальяна."""
+    buttons = [[InlineKeyboardButton(text=option, callback_data=f"coldness_{option}")] for option in COLDNESS_OPTIONS]
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 # ==================== ПРОСМОТР КАЛЬЯНОВ ====================
 
 def get_hookahs_list_keyboard(hookahs: list, shift_id: int) -> InlineKeyboardMarkup:
@@ -172,36 +181,45 @@ def get_hookahs_list_keyboard(hookahs: list, shift_id: int) -> InlineKeyboardMar
 
 # ==================== ДЕЙСТВИЯ С КАЛЬЯНОМ ====================
 
-def get_hookah_actions_keyboard(hookah_id: int) -> InlineKeyboardMarkup:
-    """
-    Получить клавиатуру с действиями для конкретного кальяна.
-    
-    Показывает кнопки для редактирования типа, стола, удаления кальяна
-    и возврата к списку.
-    
-    Args:
-        hookah_id (int): ID кальяна для редактирования
-        
-    Returns:
-        InlineKeyboardMarkup: Кнопки с доступными действиями
-    """
+def get_hookah_actions_keyboard(hookah: tuple, role: str) -> InlineKeyboardMarkup:
+    """Получить клавиатуру с действиями для конкретного кальяна, в зависимости от роли."""
+    hookah_id = hookah[0]
+    status = hookah[5] if len(hookah) > 5 else 'new_order'
+    buttons = []
+    if role in ('admin', 'hookah_master'):
+        if status == 'new_order':
+            buttons.append([InlineKeyboardButton(text="✅ Принять кальян", callback_data=f"accept_{hookah_id}")])
+        elif status == 'in_packing':
+            buttons.append([InlineKeyboardButton(text="🎯 Пометить готовым", callback_data=f"ready_{hookah_id}")])
+    if role in ('admin', 'manager'):
+        buttons.append([InlineKeyboardButton(text="✏️ Изменить тип", callback_data=f"edit_type_{hookah_id}")])
+        buttons.append([InlineKeyboardButton(text="📍 Изменить стол", callback_data=f"edit_table_{hookah_id}")])
+        buttons.append([InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_{hookah_id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_hookahs")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_profile_keyboard(notifications_enabled: bool, is_admin: bool = False) -> InlineKeyboardMarkup:
+    """Получить клавиатуру профиля пользователя с уведомлениями."""
     buttons = [
         [InlineKeyboardButton(
-            text="✏️ Изменить тип",
-            callback_data=f"edit_type_{hookah_id}"
-        )],
-        [InlineKeyboardButton(
-            text="📍 Изменить стол",
-            callback_data=f"edit_table_{hookah_id}"
-        )],
-        [InlineKeyboardButton(
-            text="🗑️ Удалить",
-            callback_data=f"delete_{hookah_id}"
-        )],
-        [InlineKeyboardButton(
-            text="⬅️ Назад к списку",
-            callback_data="back_to_hookahs"
+            text=f"🔔 Уведомления: {'Вкл' if notifications_enabled else 'Выкл'}",
+            callback_data="toggle_notifications"
         )]
+    ]
+    if is_admin:
+        buttons.append([InlineKeyboardButton(text="🛠️ Админка", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
+    """Получить клавиатуру админской панели."""
+    buttons = [
+        [InlineKeyboardButton(text="👥 Назначить роль", callback_data="assign_role_help")],
+        [InlineKeyboardButton(text="📅 Расписание работы", callback_data="admin_schedule")],
+        [InlineKeyboardButton(text="❌ Удалить текущую смену", callback_data="admin_delete_shift")],
+        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
