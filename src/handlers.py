@@ -1397,15 +1397,20 @@ async def cmd_admin_roles(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_user_"))
+@router.callback_query(F.data.startswith("admin_user_") & ~F.data.startswith("admin_user_role_"))
 async def cmd_admin_user_select(callback: CallbackQuery):
-    """Обработчик выбора пользователя для назначения роли."""
+    """Обработчик выбора пользователя для просмотра деталей."""
     if not is_admin(callback.from_user.id):
         await callback.message.edit_text("⛔ Только админ может управлять ролями.")
         await callback.answer()
         return
 
-    target_user_id = int(callback.data.replace("admin_user_", ""))
+    target_user_id = callback.data.replace("admin_user_", "")
+    if not target_user_id.isdigit():
+        await callback.answer("Ошибка данных")
+        return
+
+    target_user_id = int(target_user_id)
     profile = db.get_user_profile(target_user_id)
     if not profile:
         await callback.answer("Пользователь не найден")

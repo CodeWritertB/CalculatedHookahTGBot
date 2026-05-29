@@ -286,7 +286,6 @@ def get_admin_user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Получить клавиатуру для управления конкретным пользователем."""
     buttons = [
         [InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"admin_edit_user_name_{user_id}")],
-        [InlineKeyboardButton(text="🔧 Изменить роль", callback_data=f"admin_user_role_{user_id}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
