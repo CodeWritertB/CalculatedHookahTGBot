@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 BOT_OWNER_ID = int(getenv("ADMIN_USER_ID", "0") or 0)
+logger.info(f"🔐 Админ ID из переменных окружения: {BOT_OWNER_ID}")
+
 ROLE_LABELS = {
     'admin': 'Админ',
     'manager': 'Менеджер',
@@ -61,7 +63,9 @@ STATUS_LABELS = {
 
 
 def is_admin(user_id: int) -> bool:
-    return BOT_OWNER_ID != 0 and user_id == BOT_OWNER_ID
+    admin_status = BOT_OWNER_ID != 0 and user_id == BOT_OWNER_ID
+    logger.debug(f"Проверка админа: user_id={user_id}, BOT_OWNER_ID={BOT_OWNER_ID}, is_admin={admin_status}")
+    return admin_status
 
 
 def get_user_role(shift_id: int, user_id: int) -> str:
