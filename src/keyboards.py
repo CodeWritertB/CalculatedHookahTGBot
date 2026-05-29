@@ -55,24 +55,28 @@ def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 # ==================== УПРАВЛЕНИЕ СМЕНОЙ ====================
 
-def get_shift_management_keyboard(is_shift_open: bool = False, is_admin: bool = False) -> InlineKeyboardMarkup:
+def get_shift_management_keyboard(
+    is_shift_open: bool = False, 
+    is_admin: bool = False,
+    is_user_in_shift: bool = False,
+    is_manager: bool = False
+) -> InlineKeyboardMarkup:
     """
     Получить клавиатуру для управления сменой.
     
-    Если смена открыта:
-    - Добавить кальян
-    - Текущие кальяны
-    - Вступить в смену
-    - Закрыть смену (для админов)
-    
-    Если смена закрыта:
-    - Открыть смену (для админов)
+    Args:
+        is_shift_open: Открыта ли смена
+        is_admin: Админ ли пользователь
+        is_user_in_shift: Находится ли пользователь в смене
+        is_manager: Менеджер ли пользователь
     """
     buttons = []
     if is_shift_open:
         buttons.append([InlineKeyboardButton(text="➕ Добавить кальян", callback_data="add_hookah")])
-        buttons.append([InlineKeyboardButton(text="📋 Текущие кальяны", callback_data="current_hookahs")])
-        buttons.append([InlineKeyboardButton(text="👥 Вступить в смену", callback_data="join_shift")])
+        if is_manager:
+            buttons.append([InlineKeyboardButton(text="📋 Текущие кальяны (редактировать)", callback_data="current_hookahs")])
+        if not is_user_in_shift:
+            buttons.append([InlineKeyboardButton(text="👥 Вступить в смену", callback_data="join_shift")])
         if is_admin:
             buttons.append([InlineKeyboardButton(text="🔒 Закрыть смену", callback_data="close_shift")])
     else:
@@ -274,7 +278,17 @@ def get_admin_user_role_keyboard(user_id: int, current_role: str) -> InlineKeybo
             text=f"{label}{selected}",
             callback_data=f"admin_set_role_{user_id}_{role}"
         )])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_roles")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_admin_user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Получить клавиатуру для управления конкретным пользователем."""
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"admin_edit_user_name_{user_id}")],
+        [InlineKeyboardButton(text="🔧 Изменить роль", callback_data=f"admin_user_role_{user_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -297,6 +311,8 @@ def get_admin_shift_detail_keyboard(shift: tuple, is_admin: bool = False) -> Inl
     shift_id, open_time, close_time, is_open, total_hookahs = shift
     buttons = []
     buttons.append([InlineKeyboardButton(text="✏️ Редактировать время", callback_data=f"edit_shift_{shift_id}")])
+    buttons.append([InlineKeyboardButton(text="🍃 Изменить кальяны", callback_data=f"admin_shift_hookahs_{shift_id}")])
+    buttons.append([InlineKeyboardButton(text="👥 Изменить участников", callback_data=f"admin_shift_members_{shift_id}")])
     if is_open:
         buttons.append([InlineKeyboardButton(text="🔒 Закрыть смену", callback_data=f"admin_close_shift_{shift_id}")])
     else:

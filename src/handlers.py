@@ -158,6 +158,11 @@ class EditShift(StatesGroup):
     waiting_close_time = State()  # Ожидание ввода нового времени закрытия
 
 
+class EditUser(StatesGroup):
+    """Состояния для редактирования пользователя"""
+    waiting_display_name = State()  # Ожидание ввода нового отображаемого имени
+
+
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 def get_current_shift():
@@ -198,23 +203,50 @@ async def cmd_start(message: Message):
 async def cmd_shift_management(callback: CallbackQuery):
     """
     Обработчик кнопки 'Смена' в главном меню.
-    
-    Показывает текущий статус смены (открыта/закрыта) и соответствующие опции.
+
+    Показывает текущий статус смены (открыта/закрыта), список кальянов и
+    опции в зависимости от роли пользователя и участия в смене.
     """
     shift = db.get_current_shift()
     is_open = shift is not None
     user_id = callback.from_user.id
-    
+    is_admin_user = is_admin(user_id)
+
     status_text = "✅ Смена открыта" if is_open else "❌ Смена закрыта"
-    
     if is_open:
-        shift_info = f"{status_text}\n\n🕐 Открыта: {shift[1]}\n\nВыберите действие:"
+        shift_info = f"{status_text}\n\n🕐 Открыта: {shift[1]}\n"
+        user_in_shift = db.is_user_in_shift(shift[0], user_id)
+        current_role = get_user_role(shift[0], user_id)
+        hookahs = db.get_hookahs_by_shift(shift[0])
+        shift_info += f"Кальянов в смене: {len(hookahs)}\n\n"
+
+        if current_role in ('admin', 'manager') and hookahs:
+            shift_info += "📋 Текущие кальяны:\n"
+            for h in hookahs[:8]:
+                time = h[4][11:]
+                status = STATUS_LABELS.get(h[5] if len(h) > 5 else 'new_order', 'Новый заказ')
+                shift_info += f"• {h[3]} - {h[2]} ({status}, ⏰ {time})\n"
+            if len(hookahs) > 8:
+                shift_info += f"...и еще {len(hookahs) - 8} кальянов\n"
+        elif hookahs:
+            shift_info += f"📋 Кальянов в смене: {len(hookahs)}\n"
+        else:
+            shift_info += "📋 Кальянов в смене пока нет.\n"
+
+        shift_info += "\nВыберите действие:"
     else:
         shift_info = f"{status_text}\n\nНет активной смены. Выберите действие:"
-    
+        user_in_shift = False
+        current_role = 'member'
+
     await callback.message.edit_text(
         shift_info,
-        reply_markup=get_shift_management_keyboard(is_open, is_admin(user_id))
+        reply_markup=get_shift_management_keyboard(
+            is_shift_open=is_open,
+            is_admin=is_admin_user,
+            is_user_in_shift=user_in_shift,
+            is_manager=current_role == 'manager'
+        )
     )
     await callback.answer()
 
@@ -847,6 +879,79 @@ async def cmd_admin_shift_detail(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("admin_shift_hookahs_"))
+async def cmd_admin_shift_hookahs(callback: CallbackQuery):
+    """Обработчик просмотра кальянов в админской смене."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("admin_shift_hookahs_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.answer("Смена не найдена")
+        return
+
+    hookahs = db.get_hookahs_by_shift(shift_id)
+    if not hookahs:
+        await callback.message.edit_text(
+            f"📋 Смена #{shift_id}: кальянов нет.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_shift_{shift_id}")]
+            ])
+        )
+        await callback.answer()
+        return
+
+    text = f"📋 Кальяны смены #{shift_id}:\n\n"
+    for h in hookahs:
+        time = h[4][11:]
+        status = STATUS_LABELS.get(h[5] if len(h) > 5 else 'new_order', 'Новый заказ')
+        text += f"• {h[3]} - {h[2]} ({status}, ⏰ {time})\n"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_shift_{shift_id}")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_shift_members_"))
+async def cmd_admin_shift_members(callback: CallbackQuery):
+    """Обработчик просмотра участников конкретной смены."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("admin_shift_members_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.answer("Смена не найдена")
+        return
+
+    members = db.get_shift_users(shift_id)
+    text = f"👥 Участники смены #{shift_id}:\n\n"
+    if not members:
+        text += "Нет участников.\n"
+    else:
+        for user_id_shift, username, role, joined_at in members:
+            display_name = db.get_user_display_name(user_id_shift)
+            text += f"• {display_name} (@{username}) — {role}\n"
+            text += f"  Присоединился: {joined_at}\n\n"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_shift_{shift_id}")]
+        ])
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("admin_close_shift_"))
 async def cmd_admin_close_specific_shift(callback: CallbackQuery):
     """Админ закрывает конкретную смену."""
@@ -1107,24 +1212,21 @@ async def cmd_admin_users(callback: CallbackQuery):
         await callback.answer()
         return
     
-    users = db.get_all_users()[:10]  # Последние 10 пользователей
-    text = "👤 Пользователи системы:\n\n"
-    
+    users = db.get_all_users()[:20]  # Последние 20 пользователей
     if not users:
-        text += "Нет пользователей."
-    else:
-        for user_id_db, username, display_name, global_role in users:
-            name = display_name or username or f"User {user_id_db}"
-            text += f"• {name}\n"
-            text += f"  Роль: {global_role}\n"
-            text += f"  ID: {user_id_db}\n\n"
-    
+        await callback.message.edit_text(
+            "👤 Пользователи системы:\n\nНет пользователей.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    from src.keyboards import get_admin_users_keyboard
     await callback.message.edit_text(
-        text,
-        reply_markup=get_admin_menu_keyboard()
+        "👤 Пользователи системы:\n\nВыберите пользователя для редактирования:",
+        reply_markup=get_admin_users_keyboard(users)
     )
     await callback.answer()
-
 
 
 @router.callback_query(F.data == "admin_schedule")
@@ -1241,12 +1343,12 @@ async def cmd_admin_user_select(callback: CallbackQuery):
     current_role = profile[3] or "member"
     display_name = profile[2] or profile[1] or f"User {target_user_id}"
 
-    from src.keyboards import get_admin_user_role_keyboard
+    from src.keyboards import get_admin_user_detail_keyboard
     await callback.message.edit_text(
         f"👤 {display_name}\n"
         f"Текущая роль: {ROLE_LABELS.get(current_role, current_role)}\n\n"
-        "Выберите новую глобальную роль:",
-        reply_markup=get_admin_user_role_keyboard(target_user_id, current_role)
+        "Выберите действие:",
+        reply_markup=get_admin_user_detail_keyboard(target_user_id)
     )
     await callback.answer()
 
@@ -1293,6 +1395,81 @@ async def cmd_admin_set_role(callback: CallbackQuery):
     )
     await callback.answer()
     logger.info(f"Admin set global role for user {target_user_id} to {new_role}")
+
+
+@router.callback_query(F.data.startswith("admin_user_role_"))
+async def cmd_admin_user_role(callback: CallbackQuery):
+    """Обработчик открытия меню выбора роли для пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ может управлять ролями.")
+        await callback.answer()
+        return
+
+    user_id_str = callback.data.replace("admin_user_role_", "")
+    if not user_id_str.isdigit():
+        await callback.answer("Ошибка данных")
+        return
+
+    target_user_id = int(user_id_str)
+    profile = db.get_user_profile(target_user_id)
+    if not profile:
+        await callback.answer("Пользователь не найден")
+        return
+
+    current_role = profile[3] or "member"
+    display_name = profile[2] or profile[1] or f"User {target_user_id}"
+
+    from src.keyboards import get_admin_user_role_keyboard
+    await callback.message.edit_text(
+        f"👤 {display_name}\n"
+        f"Текущая роль: {ROLE_LABELS.get(current_role, current_role)}\n\n"
+        "Выберите новую глобальную роль:",
+        reply_markup=get_admin_user_role_keyboard(target_user_id, current_role)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_edit_user_name_"))
+async def cmd_admin_edit_user_name(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования отображаемого имени пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ может редактировать пользователя.")
+        await callback.answer()
+        return
+
+    user_id = int(callback.data.replace("admin_edit_user_name_", ""))
+    await state.update_data(target_user_id=user_id)
+    await callback.message.edit_text(
+        "📝 Введите новое отображаемое имя для пользователя:" 
+    )
+    await state.set_state(EditUser.waiting_display_name)
+    await callback.answer()
+
+
+@router.message(EditUser.waiting_display_name)
+async def process_admin_edit_user_name(message: Message, state: FSMContext):
+    """Обработка нового отображаемого имени пользователя."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ может редактировать пользователя.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+    if not target_user_id:
+        await message.answer("❌ Ошибка: пользователь не определен.")
+        await state.clear()
+        return
+
+    new_name = message.text.strip()
+    db.set_user_display_name(target_user_id, new_name)
+    display_name = db.get_user_display_name(target_user_id)
+
+    await message.answer(
+        f"✅ Имя пользователя обновлено на: {display_name}",
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "assign_role_help")

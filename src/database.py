@@ -712,6 +712,24 @@ def get_shift_user_role(shift_id: int, user_id: int) -> Optional[str]:
     return row[0] if row else None
 
 
+def is_user_in_shift(shift_id: int, user_id: int) -> bool:
+    """Проверить, находится ли пользователь в смене."""
+    return get_shift_user_role(shift_id, user_id) is not None
+
+
+def get_user_shifts(user_id: int) -> List[int]:
+    """Получить список ID смен, в которых состоит пользователь."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT DISTINCT shift_id FROM shift_members WHERE user_id = ?",
+        (user_id,)
+    )
+    shift_ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return shift_ids
+
+
 def remove_user_from_shift(shift_id: int, user_id: int) -> None:
     conn = get_connection()
     cursor = conn.cursor()
