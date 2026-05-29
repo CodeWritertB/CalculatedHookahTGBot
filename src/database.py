@@ -510,6 +510,55 @@ def update_hookah(
     conn.close()
 
 
+def update_hookah_strength_and_coldness(
+    hookah_id: int,
+    strength: Optional[int] = None,
+    coldness: Optional[str] = None,
+    order_comment: Optional[str] = None,
+    updated_by: int = None
+) -> None:
+    """Обновить силу, холодность и комментарий кальяна."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
+    
+    updates = []
+    params = []
+    
+    if strength is not None:
+        updates.append("strength = ?")
+        params.append(strength)
+    
+    if coldness is not None:
+        updates.append("coldness = ?")
+        params.append(coldness)
+    
+    if order_comment is not None:
+        updates.append("order_comment = ?")
+        params.append(order_comment)
+    
+    if updates:
+        updates.extend(["last_updated_at = ?", "last_updated_by = ?"])
+        params.extend([now, updated_by])
+        params.append(hookah_id)
+        
+        query = f"UPDATE hookahs SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        
+        comment_parts = []
+        if strength is not None:
+            comment_parts.append(f"Сила изменена на {strength}")
+        if coldness is not None:
+            comment_parts.append(f"Холодность {coldness}")
+        if order_comment is not None:
+            comment_parts.append(f"Комментарий: {order_comment}")
+        
+        log_hookah_event(hookah_id, 'updated_params', updated_by, ", ".join(comment_parts))
+    
+    conn.commit()
+    conn.close()
+
+
 def delete_hookah(hookah_id: int, deleted_by: int = None) -> None:
     """Удалить кальян из базы данных."""
     log_hookah_event(hookah_id, 'deleted', deleted_by, 'Кальян удален')
@@ -821,3 +870,53 @@ def get_user_stats_full(user_id: int) -> dict:
         'total_shifts': total_shifts,
         'month_shifts': month_shifts
     }
+
+
+# ==================== РЕДАКТИРОВАНИЕ СМЕН ====================
+
+def update_shift_open_time(shift_id: int, new_open_time: str) -> bool:
+    """Обновить время открытия смены."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE shifts SET open_time = ? WHERE id = ?",
+            (new_open_time, shift_id)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def update_shift_close_time(shift_id: int, new_close_time: str) -> bool:
+    """Обновить время закрытия смены."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE shifts SET close_time = ? WHERE id = ?",
+            (new_close_time, shift_id)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def reopen_shift(shift_id: int) -> bool:
+    """Переоткрыть закрытую смену."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE shifts SET is_open = 1, close_time = NULL WHERE id = ?",
+            (shift_id,)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False

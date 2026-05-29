@@ -69,29 +69,36 @@ def is_admin(user_id: int) -> bool:
 
 
 def get_user_role(shift_id: int, user_id: int) -> str:
+    """Получить глобальную роль пользователя. Роль не привязана к смене."""
     if is_admin(user_id):
         return 'admin'
-    return db.get_shift_user_role(shift_id, user_id)
+    global_role = db.get_user_global_role(user_id)
+    return global_role or 'member'
 
 
 def user_has_access(shift_id: int, user_id: int) -> bool:
+    """Любой зарегистрированный пользователь имеет доступ к просмотру."""
     role = get_user_role(shift_id, user_id)
     return role in ('admin', 'manager', 'hookah_master', 'supervisor', 'member')
 
 
 def can_edit_hookah(role: str) -> bool:
+    """Менеджер и админ могут редактировать кальяны."""
     return role in ('admin', 'manager')
 
 
 def can_add_hookah(role: str) -> bool:
-    return role in ('admin', 'hookah_master')
+    """Кальянный мастер, менеджер и админ могут добавлять кальяны."""
+    return role in ('admin', 'hookah_master', 'manager')
 
 
 def can_control_hookah(role: str) -> bool:
+    """Кальянный мастер и админ могут принимать/готовить кальяны."""
     return role in ('admin', 'hookah_master')
 
 
 def is_manager_or_admin(role: str) -> bool:
+    """Менеджер или админ — для редактирования и удаления."""
     return role in ('admin', 'manager')
 
 
@@ -143,6 +150,12 @@ class EditHookah(StatesGroup):
     """Состояния для редактирования кальяна"""
     waiting_type = State()   # Ожидание выбора нового типа
     waiting_table = State()  # Ожидание выбора нового стола
+
+
+class EditShift(StatesGroup):
+    """Состояния для редактирования смены"""
+    waiting_open_time = State()  # Ожидание ввода нового времени открытия
+    waiting_close_time = State()  # Ожидание ввода нового времени закрытия
 
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
@@ -452,8 +465,34 @@ async def process_hookah_coldness(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddHookah.waiting_comment)
 async def process_hookah_comment(message: Message, state: FSMContext):
-    """Обработчик ввода комментария к кальяну (FSM шаг 5)."""
+    """Обработчик ввода комментария к кальяну (FSM шаг 5) или редактирования."""
     data = await state.get_data()
+    hookah_id = data.get("hookah_id")
+    
+    # Если это редактирование, а не добавление
+    if hookah_id:
+        comment_text = message.text.strip()
+        if comment_text.lower() in ("нет", "не", "ничего", "no", ""):
+            comment_text = None
+        
+        hookah = db.get_hookah_by_id(hookah_id)
+        if hookah:
+            db.update_hookah_strength_and_coldness(
+                hookah_id,
+                order_comment=comment_text,
+                updated_by=message.from_user.id
+            )
+            user_id = message.from_user.id
+            shift_id = hookah[1]
+            await message.answer(
+                f"✅ Комментарий кальяна #{hookah_id} обновлен!",
+                reply_markup=get_hookah_actions_keyboard(hookah, get_user_role(shift_id, user_id))
+            )
+            logger.info(f"Кальян #{hookah_id}: комментарий обновлен")
+        await state.clear()
+        return
+    
+    # Иначе это добавление нового кальяна
     hookah_type = data.get("hookah_type")
     table_name = data.get("table_name")
     strength = data.get("strength", 5)
@@ -505,23 +544,12 @@ async def cmd_current_hookahs(callback: CallbackQuery):
     
     Выводит список всех кальянов за текущую смену с информацией.
     Если кальянов нет, выводит соответствующее сообщение.
-    
-    Args:
-        callback (CallbackQuery): Callback от нажатия кнопки
     """
     shift = get_current_shift()
     
     # Проверка: есть ли открытая смена
     if not shift:
         await callback.message.edit_text("⚠️ Нет открытой смены.")
-        await callback.answer()
-        return
-    
-    role = get_user_role(shift[0], callback.from_user.id)
-    if not role:
-        await callback.message.edit_text(
-            "⛔ Вы не участвуете в текущей смене. Вступите в смену или попросите администратора назначить роль."
-        )
         await callback.answer()
         return
 
@@ -756,7 +784,7 @@ async def cmd_admin_members(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_shifts")
 async def cmd_admin_shifts(callback: CallbackQuery):
-    """Обработчик управления сменами."""
+    """Обработчик управления сменами — показывает список смен с кнопками."""
     user_id = callback.from_user.id
     
     if not is_admin(user_id):
@@ -767,24 +795,303 @@ async def cmd_admin_shifts(callback: CallbackQuery):
         await callback.answer()
         return
     
-    shifts = db.get_all_shifts()[:5]  # Последние 5 смен
-    text = "📋 Последние 5 смен:\n\n"
+    shifts = db.get_all_shifts()[:10]  # Последние 10 смен
     
     if not shifts:
-        text += "Нет смен в системе."
-    else:
-        for shift_id, open_time, close_time, is_open, total_hookahs in shifts:
-            status = "Открыта" if is_open else "Закрыта"
-            text += f"Смена #{shift_id}\n"
-            text += f"Открыта: {open_time}\n"
-            text += f"Статус: {status}\n"
-            text += f"Кальянов: {total_hookahs}\n\n"
-    
+        await callback.message.edit_text(
+            "Нет смен в системе.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    from src.keyboards import get_admin_shifts_keyboard
+    await callback.message.edit_text(
+        "📋 Управление сменами\nВыберите смену для редактирования:",
+        reply_markup=get_admin_shifts_keyboard(shifts)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_shift_"))
+async def cmd_admin_shift_detail(callback: CallbackQuery):
+    """Обработчик просмотра и управления конкретной сменой из админки."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("admin_shift_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.answer("Смена не найдена")
+        return
+
+    hookahs = db.get_hookahs_by_shift(shift_id)
+    status = "✅ Открыта" if shift[3] else "🔒 Закрыта"
+
+    text = (
+        f"📋 Смена #{shift[0]}\n"
+        f"Статус: {status}\n"
+        f"Открыта: {shift[1]}\n"
+    )
+    if shift[2]:
+        text += f"Закрыта: {shift[2]}\n"
+    text += f"Кальянов: {len(hookahs)}\n"
+
+    from src.keyboards import get_admin_shift_detail_keyboard
     await callback.message.edit_text(
         text,
+        reply_markup=get_admin_shift_detail_keyboard(shift, is_admin=True)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_close_shift_"))
+async def cmd_admin_close_specific_shift(callback: CallbackQuery):
+    """Админ закрывает конкретную смену."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("admin_close_shift_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift or not shift[3]:
+        await callback.message.edit_text(
+            "⚠️ Смена уже закрыта или не найдена.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    db.close_shift(shift_id)
+    hookahs = db.get_hookahs_by_shift(shift_id)
+
+    await callback.message.edit_text(
+        f"✅ Смена #{shift_id} закрыта.\nКальянов: {len(hookahs)}",
         reply_markup=get_admin_menu_keyboard()
     )
     await callback.answer()
+    logger.info(f"Admin closed shift #{shift_id}")
+
+
+@router.callback_query(F.data.startswith("admin_delete_shift_"))
+async def cmd_admin_delete_specific_shift(callback: CallbackQuery):
+    """Админ удаляет конкретную смену."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("admin_delete_shift_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.message.edit_text(
+            "⚠️ Смена не найдена.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        f"❗ Удалить смену #{shift_id}? Все кальяны и данные будут удалены безвозвратно.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_admin_delete_shift_{shift_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_shifts")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_admin_delete_shift_"))
+async def cmd_confirm_admin_delete_shift(callback: CallbackQuery):
+    """Подтверждение удаления смены из админки."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("confirm_admin_delete_shift_", ""))
+    db.delete_shift(shift_id)
+
+    await callback.message.edit_text(
+        f"✅ Смена #{shift_id} удалена.",
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+    logger.info(f"Admin deleted shift #{shift_id}")
+
+
+@router.callback_query(F.data.startswith("reopen_shift_"))
+async def cmd_reopen_shift(callback: CallbackQuery):
+    """Переоткрыть закрытую смену."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("reopen_shift_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.message.edit_text("Смена не найдена.", reply_markup=get_admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    if shift[3]:  # is_open
+        await callback.message.edit_text("Эта смена уже открыта.", reply_markup=get_admin_menu_keyboard())
+        await callback.answer()
+        return
+
+    db.reopen_shift(shift_id)
+    await callback.message.edit_text(
+        f"✅ Смена #{shift_id} переоткрыта.",
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+    logger.info(f"Admin reopened shift #{shift_id}")
+
+
+@router.callback_query(F.data.startswith("edit_shift_") & ~F.data.startswith("edit_shift_open_time_") & ~F.data.startswith("edit_shift_close_time_"))
+async def cmd_edit_shift(callback: CallbackQuery):
+    """Показать меню редактирования смены."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("edit_shift_", ""))
+    shift = db.get_shift_by_id(shift_id)
+    if not shift:
+        await callback.answer("Смена не найдена")
+        return
+
+    from src.keyboards import get_edit_shift_time_keyboard
+    await callback.message.edit_text(
+        f"📝 Редактирование смены #{shift_id}\n"
+        f"Текущее время открытия: {shift[1]}\n"
+        f"Текущее время закрытия: {shift[2] or 'не закрыта'}\n\n"
+        "Выберите что редактировать:",
+        reply_markup=get_edit_shift_time_keyboard(shift_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_shift_open_time_"))
+async def cmd_edit_shift_open_time(callback: CallbackQuery, state: FSMContext):
+    """Начать редактирование времени открытия смены."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("edit_shift_open_time_", ""))
+    await state.update_data(shift_id=shift_id)
+    await callback.message.edit_text(
+        "📝 Введите новое время открытия в формате:\n"
+        "YYYY-MM-DD HH:MM:SS\n\n"
+        "Пример: 2026-05-29 18:00:00"
+    )
+    await state.set_state(EditShift.waiting_open_time)
+    await callback.answer()
+
+
+@router.message(EditShift.waiting_open_time)
+async def process_edit_shift_open_time(message: Message, state: FSMContext):
+    """Обработать ввод нового времени открытия."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ может редактировать смены.")
+        await state.clear()
+        return
+
+    new_time = message.text.strip()
+    data = await state.get_data()
+    shift_id = data.get("shift_id")
+
+    # Проверяем формат времени
+    try:
+        from datetime import datetime
+        datetime.strptime(new_time, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат времени!\n\n"
+            "Используйте формат: YYYY-MM-DD HH:MM:SS\n"
+            "Пример: 2026-05-29 18:00:00"
+        )
+        return
+
+    if db.update_shift_open_time(shift_id, new_time):
+        await message.answer(
+            f"✅ Время открытия смены #{shift_id} обновлено на: {new_time}",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        logger.info(f"Admin updated shift #{shift_id} open_time to {new_time}")
+    else:
+        await message.answer(
+            "❌ Ошибка при обновлении времени.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("edit_shift_close_time_"))
+async def cmd_edit_shift_close_time(callback: CallbackQuery, state: FSMContext):
+    """Начать редактирование времени закрытия смены."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ.")
+        await callback.answer()
+        return
+
+    shift_id = int(callback.data.replace("edit_shift_close_time_", ""))
+    await state.update_data(shift_id=shift_id)
+    await callback.message.edit_text(
+        "📝 Введите новое время закрытия в формате:\n"
+        "YYYY-MM-DD HH:MM:SS\n\n"
+        "Пример: 2026-05-29 23:00:00"
+    )
+    await state.set_state(EditShift.waiting_close_time)
+    await callback.answer()
+
+
+@router.message(EditShift.waiting_close_time)
+async def process_edit_shift_close_time(message: Message, state: FSMContext):
+    """Обработать ввод нового времени закрытия."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ может редактировать смены.")
+        await state.clear()
+        return
+
+    new_time = message.text.strip()
+    data = await state.get_data()
+    shift_id = data.get("shift_id")
+
+    # Проверяем формат времени
+    try:
+        from datetime import datetime
+        datetime.strptime(new_time, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат времени!\n\n"
+            "Используйте формат: YYYY-MM-DD HH:MM:SS\n"
+            "Пример: 2026-05-29 23:00:00"
+        )
+        return
+
+    if db.update_shift_close_time(shift_id, new_time):
+        await message.answer(
+            f"✅ Время закрытия смены #{shift_id} обновлено на: {new_time}",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        logger.info(f"Admin updated shift #{shift_id} close_time to {new_time}")
+    else:
+        await message.answer(
+            "❌ Ошибка при обновлении времени.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+
+    await state.clear()
+
 
 
 @router.callback_query(F.data == "admin_users")
@@ -891,47 +1198,104 @@ async def cmd_toggle_notifications(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "assign_role_help")
-async def cmd_assign_role_help(callback: CallbackQuery):
+@router.callback_query(F.data == "admin_roles")
+async def cmd_admin_roles(callback: CallbackQuery):
+    """Обработчик управления глобальными ролями пользователей."""
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.message.edit_text("⛔ Только админ может управлять ролями.")
+        await callback.answer()
+        return
+
+    users = db.get_all_users()
+    if not users:
+        await callback.message.edit_text(
+            "Нет пользователей в системе.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    from src.keyboards import get_admin_users_keyboard
     await callback.message.edit_text(
-        "🧩 Назначить роль может только админ.\n"
-        "Используйте команду:\n"
-        "/assign_role <user_id> <role>\n\n"
-        "Доступные роли: manager, hookah_master, supervisor, member"
+        "👥 Выберите пользователя для назначения глобальной роли:",
+        reply_markup=get_admin_users_keyboard(users)
     )
     await callback.answer()
 
 
-@router.message(Command("assign_role"))
-async def cmd_assign_role(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.reply("⛔ Только админ может назначать роли.")
+@router.callback_query(F.data.startswith("admin_user_"))
+async def cmd_admin_user_select(callback: CallbackQuery):
+    """Обработчик выбора пользователя для назначения роли."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ может управлять ролями.")
+        await callback.answer()
         return
 
-    parts = message.text.split()
-    if len(parts) < 3:
-        await message.reply("Использование: /assign_role <user_id> <role>")
+    target_user_id = int(callback.data.replace("admin_user_", ""))
+    profile = db.get_user_profile(target_user_id)
+    if not profile:
+        await callback.answer("Пользователь не найден")
         return
 
-    try:
-        target_id = int(parts[1])
-    except ValueError:
-        await message.reply("Неправильный user_id. Укажите числовой Telegram user_id.")
+    current_role = profile[3] or "member"
+    display_name = profile[2] or profile[1] or f"User {target_user_id}"
+
+    from src.keyboards import get_admin_user_role_keyboard
+    await callback.message.edit_text(
+        f"👤 {display_name}\n"
+        f"Текущая роль: {ROLE_LABELS.get(current_role, current_role)}\n\n"
+        "Выберите новую глобальную роль:",
+        reply_markup=get_admin_user_role_keyboard(target_user_id, current_role)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_set_role_"))
+async def cmd_admin_set_role(callback: CallbackQuery):
+    """Обработчик установки глобальной роли пользователю."""
+    if not is_admin(callback.from_user.id):
+        await callback.message.edit_text("⛔ Только админ может управлять ролями.")
+        await callback.answer()
         return
 
-    role = parts[2]
-    shift = get_current_shift()
-    if not shift:
-        await message.reply("⚠️ Нет открытой смены.")
+    # Формат: admin_set_role_{user_id}_{role}
+    parts = callback.data.replace("admin_set_role_", "").rsplit("_", 1)
+    if len(parts) != 2:
+        await callback.answer("Ошибка данных")
         return
 
-    db.add_user_if_not_exists(target_id, None)
-    success, msg = db.assign_user_to_shift(shift[0], target_id, role)
-    if not success:
-        await message.reply(f"⚠️ {msg}")
+    target_user_id = int(parts[0])
+    new_role = parts[1]
+
+    valid_roles = ["member", "manager", "hookah_master", "supervisor"]
+    if new_role not in valid_roles:
+        await callback.answer("Недопустимая роль")
         return
 
-    await message.reply(f"✅ Пользователь {target_id} назначен как {role} в текущую смену.")
+    db.set_user_global_role(target_user_id, new_role)
+    display_name = db.get_user_display_name(target_user_id)
+
+    await callback.message.edit_text(
+        f"✅ Роль пользователя {display_name} изменена на: {ROLE_LABELS.get(new_role, new_role)}",
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+    logger.info(f"Admin set global role for user {target_user_id} to {new_role}")
+
+
+@router.callback_query(F.data == "assign_role_help")
+async def cmd_assign_role_help(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🧩 Назначить роль можно через Админ панель → Роли.\n\n"
+        "Глобальные роли определяют права пользователя на все смены:\n"
+        "• Менеджер — может редактировать кальяны\n"
+        "• Кальянный мастер — может добавлять кальяны\n"
+        "• Управляющий — расширенный доступ\n"
+        "• Участник — базовый просмотр",
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
 @router.callback_query(F.data.startswith("view_"))
 async def cmd_view_hookah(callback: CallbackQuery):
     """Обработчик просмотра деталей конкретного кальяна."""
@@ -1136,6 +1500,124 @@ async def process_edit_table(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
     logger.info(f"Кальян #{hookah_id}: стол изменен на {table}")
+
+
+@router.callback_query(F.data.startswith("edit_strength_"))
+async def cmd_edit_strength(callback: CallbackQuery, state: FSMContext):
+    """Обработчик начала редактирования силы кальяна."""
+    hookah_id = int(callback.data.replace("edit_strength_", ""))
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        await callback.answer("❌ Кальян не найден")
+        return
+
+    role = get_user_role(hookah[1], callback.from_user.id)
+    if not is_manager_or_admin(role):
+        await callback.message.edit_text("⛔ У вас нет прав редактировать кальяны.")
+        await callback.answer()
+        return
+
+    await state.update_data(hookah_id=hookah_id)
+    await callback.message.edit_text(
+        "🔥 Выберите силу кальяна (1-10):",
+        reply_markup=get_strength_keyboard()
+    )
+    await state.set_state(EditHookah.waiting_type)  # Переиспользуем waiting_type для простоты
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_coldness_"))
+async def cmd_edit_coldness(callback: CallbackQuery, state: FSMContext):
+    """Обработчик начала редактирования холодности кальяна."""
+    hookah_id = int(callback.data.replace("edit_coldness_", ""))
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        await callback.answer("❌ Кальян не найден")
+        return
+
+    role = get_user_role(hookah[1], callback.from_user.id)
+    if not is_manager_or_admin(role):
+        await callback.message.edit_text("⛔ У вас нет прав редактировать кальяны.")
+        await callback.answer()
+        return
+
+    await state.update_data(hookah_id=hookah_id, edit_type="coldness")
+    await callback.message.edit_text(
+        "❄️ Выберите степень холодности:",
+        reply_markup=get_coldness_keyboard()
+    )
+    await state.set_state(EditHookah.waiting_table)  # Переиспользуем waiting_table для простоты
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_comment_"))
+async def cmd_edit_comment(callback: CallbackQuery, state: FSMContext):
+    """Обработчик начала редактирования комментария кальяна."""
+    hookah_id = int(callback.data.replace("edit_comment_", ""))
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        await callback.answer("❌ Кальян не найден")
+        return
+
+    role = get_user_role(hookah[1], callback.from_user.id)
+    if not is_manager_or_admin(role):
+        await callback.message.edit_text("⛔ У вас нет прав редактировать кальяны.")
+        await callback.answer()
+        return
+
+    await state.update_data(hookah_id=hookah_id)
+    await callback.message.edit_text(
+        "💬 Введите новый комментарий к кальяну или отправьте 'нет' для удаления комментария:"
+    )
+    await state.set_state(AddHookah.waiting_comment)  # Переиспользуем для ввода комментария
+    await callback.answer()
+
+
+# Обработчик для изменения силы при редактировании (через FSM)
+@router.callback_query(EditHookah.waiting_type, F.data.startswith("strength_"))
+async def process_edit_strength(callback: CallbackQuery, state: FSMContext):
+    """Обработчик сохранения новой силы кальяна."""
+    strength = int(callback.data.replace("strength_", ""))
+    data = await state.get_data()
+    hookah_id = data.get("hookah_id")
+    
+    db.update_hookah_strength_and_coldness(
+        hookah_id,
+        strength=strength,
+        updated_by=callback.from_user.id
+    )
+    
+    await callback.message.edit_text(
+        f"✅ Сила кальяна успешно изменена на: {strength}/10",
+        reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), get_user_role(db.get_hookah_by_id(hookah_id)[1], callback.from_user.id))
+    )
+    await state.clear()
+    await callback.answer()
+    logger.info(f"Кальян #{hookah_id}: сила изменена на {strength}")
+
+
+# Обработчик для изменения холодности при редактировании (через FSM)
+@router.callback_query(EditHookah.waiting_table, F.data.startswith("coldness_"))
+async def process_edit_coldness(callback: CallbackQuery, state: FSMContext):
+    """Обработчик сохранения новой холодности кальяна."""
+    coldness = callback.data.replace("coldness_", "")
+    data = await state.get_data()
+    hookah_id = data.get("hookah_id")
+    
+    db.update_hookah_strength_and_coldness(
+        hookah_id,
+        coldness=coldness,
+        updated_by=callback.from_user.id
+    )
+    
+    await callback.message.edit_text(
+        f"✅ Холодность кальяна успешно изменена на: {coldness}",
+        reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), get_user_role(db.get_hookah_by_id(hookah_id)[1], callback.from_user.id))
+    )
+    await state.clear()
+    await callback.answer()
+    logger.info(f"Кальян #{hookah_id}: холодность изменена на {coldness}")
+
 
 
 @router.callback_query(F.data.startswith("delete_"))
