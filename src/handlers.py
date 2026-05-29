@@ -37,14 +37,31 @@ from src.keyboards import (
     get_history_keyboard,
     get_profile_keyboard,
     get_admin_menu_keyboard,
+    get_ig_settings_keyboard,
     get_confirm_close_keyboard
 )
+
+# Дополнительные ключи настроек
+IG_MONITOR_KEY = 'ig_monitor_enabled'
+IG_ACCOUNT_KEY = 'instagram_account'
+IG_INTERVAL_KEY = 'instagram_poll_interval'
+IG_TARGET_CHAT_KEY = 'target_chat_id'
+GMAIL_EMAIL_KEY = 'gmail_email'
+GMAIL_PASS_KEY = 'gmail_app_password'
 
 # Настройка логирования для этого модуля
 logger = logging.getLogger(__name__)
 
 # Главный маршрутизатор для регистрации всех обработчиков
 router = Router()
+
+
+class IGSettingsStates(StatesGroup):
+    waiting_account = State()
+    waiting_interval = State()
+    waiting_target_chat = State()
+    waiting_gmail_email = State()
+    waiting_gmail_pass = State()
 
 BOT_OWNER_ID = int(getenv("ADMIN_USER_ID", "0") or 0)
 REPORT_CHAT_ID = int(getenv("REPORT_CHAT_ID", "0") or 0)
@@ -402,6 +419,96 @@ async def cmd_shift_management(callback: CallbackQuery):
             is_manager=current_role == 'manager'
         )
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_ig_settings")
+async def callback_admin_ig_settings(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+
+    settings = db.get_all_settings()
+    enabled = settings.get(IG_MONITOR_KEY, '0')
+    account = settings.get(IG_ACCOUNT_KEY, getenv('INSTAGRAM_ACCOUNT', 'mount.bar'))
+    interval = settings.get(IG_INTERVAL_KEY, getenv('INSTAGRAM_POLL_INTERVAL', '10'))
+    target = settings.get(IG_TARGET_CHAT_KEY, getenv('TARGET_CHAT_ID', '0'))
+    gmail = settings.get(GMAIL_EMAIL_KEY, getenv('GMAIL_EMAIL', ''))
+
+    text = (
+        f"📸 Настройки Instagram парсера:\n"
+        f"Монитор включён: {'Да' if enabled == '1' else 'Нет'}\n"
+        f"Аккаунт: {account}\n"
+        f"Интервал: {interval} с\n"
+        f"Целевой чат: {target}\n"
+        f"Gmail: {gmail}\n"
+    )
+
+    keyboard = get_ig_settings_keyboard(enabled == '1')
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ig_toggle")
+async def callback_ig_toggle(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    cur = db.get_setting(IG_MONITOR_KEY, '0')
+    new = '0' if cur == '1' else '1'
+    db.set_setting(IG_MONITOR_KEY, new)
+    await callback.answer(f"Монитор {'включён' if new=='1' else 'выключен'}")
+    # обновим клавиатуру
+    await callback.message.edit_reply_markup(reply_markup=get_ig_settings_keyboard(new == '1'))
+
+
+@router.callback_query(F.data == "ig_set_account")
+async def callback_ig_set_account(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    await callback.message.edit_text("✏️ Отправьте новое имя аккаунта (без @):")
+    await state.set_state(IGSettingsStates.waiting_account)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ig_set_interval")
+async def callback_ig_set_interval(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    await callback.message.edit_text("⏱️ Отправьте новый интервал проверки в секундах:")
+    await state.set_state(IGSettingsStates.waiting_interval)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ig_set_target_chat")
+async def callback_ig_set_target_chat(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    await callback.message.edit_text("🎯 Отправьте ID целевого чата (например: -1003826622440):")
+    await state.set_state(IGSettingsStates.waiting_target_chat)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ig_set_gmail_email")
+async def callback_ig_set_gmail_email(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    await callback.message.edit_text("📧 Отправьте Gmail адрес для автопроверки: ")
+    await state.set_state(IGSettingsStates.waiting_gmail_email)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ig_set_gmail_pass")
+async def callback_ig_set_gmail_pass(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Только админ.")
+        return
+    await callback.message.edit_text("🔐 Отправьте App Password для Gmail (будет сохранён в БД):")
+    await state.set_state(IGSettingsStates.waiting_gmail_pass)
     await callback.answer()
 
 
@@ -2143,3 +2250,317 @@ async def cmd_back_to_hookahs(callback: CallbackQuery):
             )
     
     await callback.answer()
+
+
+@router.message(Command("ig_settings"))
+async def cmd_ig_settings(message: Message):
+    """Показать текущие настройки парсинга Instagram (доступно только админу)."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор может просматривать настройки.")
+        return
+
+    settings = db.get_all_settings()
+    enabled = settings.get(IG_MONITOR_KEY, '0')
+    account = settings.get(IG_ACCOUNT_KEY, getenv('INSTAGRAM_ACCOUNT', 'mount.bar'))
+    interval = settings.get(IG_INTERVAL_KEY, getenv('INSTAGRAM_POLL_INTERVAL', '10'))
+    target = settings.get(IG_TARGET_CHAT_KEY, getenv('TARGET_CHAT_ID', '0'))
+    gmail = settings.get(GMAIL_EMAIL_KEY, getenv('GMAIL_EMAIL', ''))
+
+    masked_pass = '••••••' if settings.get(GMAIL_PASS_KEY) else ''
+
+    text = (
+        f"📸 Настройки Instagram парсера:\n"
+        f"Монитор включён: {'Да' if enabled == '1' else 'Нет'}\n"
+        f"Аккаунт для парсинга: {account}\n"
+        f"Интервал проверки (с): {interval}\n"
+        f"ID целевого чата: {target}\n"
+        f"Gmail (для автокода): {gmail} {masked_pass}\n\n"
+        "Команды для изменения:\n"
+        "/set_ig_account <имя> — задать аккаунт (без @)\n"
+        "/set_ig_interval <секунды> — задать интервал\n"
+        "/set_target_chat <id> — задать ID чата\n"
+        "/set_gmail_email <email> — задать Gmail\n"
+        "/set_gmail_pass <app_password> — задать пароль приложения\n"
+        "/toggle_ig_monitor — включить/выключить монитор\n"
+    )
+
+    await message.answer(text)
+
+
+@router.message(Command("set_ig_account"))
+async def cmd_set_ig_account(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /set_ig_account <имя_аккаунта>")
+        return
+    account = parts[1].strip().lstrip('@')
+    db.set_setting(IG_ACCOUNT_KEY, account)
+    await message.answer(f"✅ Аккаунт для парсинга установлен: {account}\nПерезапустите бота для применения настроек.")
+
+
+@router.message(Command("set_ig_interval"))
+async def cmd_set_ig_interval(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /set_ig_interval <секунды>")
+        return
+    try:
+        val = int(parts[1])
+        if val < 1:
+            raise ValueError()
+    except ValueError:
+        await message.answer("Интервал должен быть положительным целым числом.")
+        return
+    db.set_setting(IG_INTERVAL_KEY, str(val))
+    await message.answer(f"✅ Интервал проверки установлен: {val} секунд\nПерезапустите бота для применения настроек.")
+
+
+@router.message(Command("set_target_chat"))
+async def cmd_set_target_chat(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /set_target_chat <id>")
+        return
+    db.set_setting(IG_TARGET_CHAT_KEY, parts[1])
+    await message.answer(f"✅ TARGET_CHAT_ID установлен: {parts[1]}\nПерезапустите бота для применения настроек.")
+
+
+@router.message(Command("set_gmail_email"))
+async def cmd_set_gmail_email(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /set_gmail_email <email>")
+        return
+    db.set_setting(GMAIL_EMAIL_KEY, parts[1])
+    await message.answer("✅ Gmail установлен. Перезапустите бота для применения настроек.")
+
+
+@router.message(Command("set_gmail_pass"))
+async def cmd_set_gmail_pass(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /set_gmail_pass <app_password>")
+        return
+    db.set_setting(GMAIL_PASS_KEY, parts[1])
+    await message.answer("✅ Gmail App Password сохранён. Перезапустите бота для применения настроек.")
+
+
+@router.message(Command("toggle_ig_monitor"))
+async def cmd_toggle_ig_monitor(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        return
+    current = db.get_setting(IG_MONITOR_KEY, '0')
+    new = '0' if current == '1' else '1'
+    db.set_setting(IG_MONITOR_KEY, new)
+    await message.answer(f"✅ Монитор Instagram теперь {'включён' if new=='1' else 'выключен'}.\nПерезапустите бота для применения изменений.")
+
+
+# Обработчики для состояний ввода настроек (FSM)
+@router.message(IGSettingsStates.waiting_account)
+async def ig_receive_account(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        await state.clear()
+        return
+    account = message.text.strip().lstrip('@')
+    db.set_setting(IG_ACCOUNT_KEY, account)
+    await message.answer(f"✅ Аккаунт установлен: {account}\nПерезапустите бота для применения.")
+    await state.clear()
+
+
+@router.message(IGSettingsStates.waiting_interval)
+async def ig_receive_interval(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        await state.clear()
+        return
+    try:
+        val = int(message.text.strip())
+        if val < 1:
+            raise ValueError()
+    except ValueError:
+        await message.answer("Интервал должен быть положительным целым числом. Попробуйте ещё раз.")
+        return
+    db.set_setting(IG_INTERVAL_KEY, str(val))
+    await message.answer(f"✅ Интервал установлен: {val} секунд\nПерезапустите бота для применения.")
+    await state.clear()
+
+
+@router.message(IGSettingsStates.waiting_target_chat)
+async def ig_receive_target_chat(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        await state.clear()
+        return
+    target = message.text.strip()
+    db.set_setting(IG_TARGET_CHAT_KEY, target)
+    await message.answer(f"✅ TARGET_CHAT_ID установлен: {target}\nПерезапустите бота для применения.")
+    await state.clear()
+
+
+@router.message(IGSettingsStates.waiting_gmail_email)
+async def ig_receive_gmail_email(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        await state.clear()
+        return
+    email_addr = message.text.strip()
+    db.set_setting(GMAIL_EMAIL_KEY, email_addr)
+    await message.answer("✅ Gmail установлен. Перезапустите бота для применения.")
+    await state.clear()
+
+
+@router.message(IGSettingsStates.waiting_gmail_pass)
+async def ig_receive_gmail_pass(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только админ.")
+        await state.clear()
+        return
+    pwd = message.text.strip()
+    db.set_setting(GMAIL_PASS_KEY, pwd)
+    await message.answer("✅ Gmail App Password сохранён. Перезапустите бота для применения.")
+    await state.clear()
+
+
+# ==================== INSTAGRAM PARSER ====================
+
+@router.message(Command("parse_posts"))
+async def cmd_parse_posts(message: Message):
+    """
+    Обработчик команды парсинга постов Instagram.
+    
+    Команда: /parse_posts [количество]
+    Доступна только админам.
+    
+    Args:
+        message (Message): Сообщение с командой
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор может парсить посты.")
+        return
+    
+    instagram_username = getenv("INSTAGRAM_USERNAME")
+    instagram_password = getenv("INSTAGRAM_PASSWORD")
+    target_chat_id = int(getenv("TARGET_CHAT_ID", "0") or 0)
+    instagram_account = getenv("INSTAGRAM_ACCOUNT", "mount.bar")
+    
+    if not instagram_username or not instagram_password:
+        await message.answer("❌ Учетные данные Instagram не настроены. Добавьте INSTAGRAM_USERNAME и INSTAGRAM_PASSWORD в .env")
+        return
+    
+    if target_chat_id == 0:
+        await message.answer("❌ TARGET_CHAT_ID не настроен в .env")
+        return
+    
+    # Получаем количество постов из аргументов команды
+    args = message.text.split()
+    count = 5  # Значение по умолчанию
+    if len(args) > 1:
+        try:
+            count = int(args[1])
+            if count > 50:
+                count = 50
+        except ValueError:
+            pass
+    
+    await message.answer(f"🔄 Загружаю посты @{instagram_account}...\n(это может занять некоторое время)")
+    
+    try:
+        from src.instagram_parser import InstagramParser, send_posts_to_telegram
+        
+        parser = InstagramParser(instagram_username, instagram_password)
+        
+        # Вход в аккаунт
+        if not await parser.login():
+            await message.answer("❌ Не удалось войти в Instagram аккаунт. Проверьте учетные данные.")
+            return
+        
+        # Отправляем посты
+        await send_posts_to_telegram(
+            message.bot,
+            target_chat_id,
+            parser,
+            instagram_account,
+            count
+        )
+        
+        await message.answer(f"✅ Посты @{instagram_account} успешно загружены в чат!")
+        
+    except ImportError:
+        await message.answer("❌ Библиотека instagrapi не установлена. Выполните: pip install -r requirements.txt")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при парсинге постов: {e}")
+        await message.answer(f"❌ Ошибка при загрузке постов: {str(e)}")
+
+
+@router.message(Command("parse_stories"))
+async def cmd_parse_stories(message: Message):
+    """
+    Обработчик команды парсинга историй Instagram.
+    
+    Команда: /parse_stories
+    Доступна только админам.
+    
+    Args:
+        message (Message): Сообщение с командой
+    """
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Только администратор может парсить истории.")
+        return
+    
+    instagram_username = getenv("INSTAGRAM_USERNAME")
+    instagram_password = getenv("INSTAGRAM_PASSWORD")
+    target_chat_id = int(getenv("TARGET_CHAT_ID", "0") or 0)
+    instagram_account = getenv("INSTAGRAM_ACCOUNT", "mount.bar")
+    
+    if not instagram_username or not instagram_password:
+        await message.answer("❌ Учетные данные Instagram не настроены. Добавьте INSTAGRAM_USERNAME и INSTAGRAM_PASSWORD в .env")
+        return
+    
+    if target_chat_id == 0:
+        await message.answer("❌ TARGET_CHAT_ID не настроен в .env")
+        return
+    
+    await message.answer(f"🔄 Загружаю истории @{instagram_account}...\n(это может занять некоторое время)")
+    
+    try:
+        from src.instagram_parser import InstagramParser, send_stories_to_telegram
+        
+        parser = InstagramParser(instagram_username, instagram_password)
+        
+        # Вход в аккаунт
+        if not await parser.login():
+            await message.answer("❌ Не удалось войти в Instagram аккаунт. Проверьте учетные данные.")
+            return
+        
+        # Отправляем истории
+        await send_stories_to_telegram(
+            message.bot,
+            target_chat_id,
+            parser,
+            instagram_account
+        )
+        
+        await message.answer(f"✅ Истории @{instagram_account} успешно загружены в чат!")
+        
+    except ImportError:
+        await message.answer("❌ Библиотека instagrapi не установлена. Выполните: pip install -r requirements.txt")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при парсинге историй: {e}")
+        await message.answer(f"❌ Ошибка при загрузке историй: {str(e)}")

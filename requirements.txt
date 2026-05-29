@@ -9,3 +9,15 @@ aiogram==3.24.0
 # Environment variables management
 # https://github.com/theskumar/python-dotenv
 python-dotenv==1.0.1
+
+# Instagram API client (unofficial)
+# https://github.com/adw0rd/instagrapi
+instagrapi==2.0.0
+
+# Async HTTP client for requests
+# https://github.com/psf/requests
+requests==2.32.3
+
+# Image processing
+# https://github.com/python-pillow/Pillow
+Pillow==10.2.0

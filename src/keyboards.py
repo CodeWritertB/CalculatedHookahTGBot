@@ -257,7 +257,21 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👥 Участники", callback_data="admin_members")],
         [InlineKeyboardButton(text="📋 Смены", callback_data="admin_shifts")],
         [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin_users")],
+        [InlineKeyboardButton(text="📸 Instagram", callback_data="admin_ig_settings")],
         [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main_menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_ig_settings_keyboard(enabled: bool = False) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=("✅ Отключить монитор" if enabled else "✅ Включить монитор"), callback_data="ig_toggle")],
+        [InlineKeyboardButton(text="✏️ Установить аккаунт", callback_data="ig_set_account")],
+        [InlineKeyboardButton(text="⏱️ Установить интервал", callback_data="ig_set_interval")],
+        [InlineKeyboardButton(text="🎯 Установить ID чата", callback_data="ig_set_target_chat")],
+        [InlineKeyboardButton(text="📧 Установить Gmail", callback_data="ig_set_gmail_email")],
+        [InlineKeyboardButton(text="🔐 Установить Gmail App Password", callback_data="ig_set_gmail_pass")],
+        [InlineKeyboardButton(text="⬅️ Назад в админ панель", callback_data="admin_panel")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

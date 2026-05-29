@@ -1,4 +1,15 @@
-# Environment
+.env
+data/
+venv/
+venv\
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.DS_Store
+logs/
+*.log# Environment
 .env
 .env.local
 .env.*.local

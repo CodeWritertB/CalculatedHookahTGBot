@@ -154,6 +154,18 @@ def init_db() -> None:
     conn.commit()
     conn.close()
 
+    # Таблица настроек key/value
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ БАЗЫ ДАННЫХ ====================
 
@@ -299,6 +311,36 @@ def get_user_master_hookah_stats(user_id: int) -> Tuple[int, int, int, int]:
     total_hookahs = cursor.fetchone()[0] or 0
     conn.close()
     return your_shift_hookahs, standard, cigar, total_hookahs
+
+
+# ==================== SETTINGS ====================
+def set_setting(key: str, value: str) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (key, value)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key: str, default: str = None) -> str:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+
+def get_all_settings() -> dict:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM settings")
+    rows = cursor.fetchall()
+    conn.close()
+    return {k: v for k, v in rows}
 
 
 # ==================== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ СМЕНАМИ ====================

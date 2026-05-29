@@ -87,6 +87,32 @@ async def main():
 
     dp.errors.register(errors_handler)
     
+    # Попытка запустить фоновый Instagram монитор, если настроены переменные окружения
+    instagram_username = getenv("INSTAGRAM_USERNAME")
+    instagram_password = getenv("INSTAGRAM_PASSWORD")
+    instagram_account = getenv("INSTAGRAM_ACCOUNT", "mount.bar")
+    target_chat_id = int(getenv("TARGET_CHAT_ID", "0") or 0)
+    poll_interval = int(getenv("INSTAGRAM_POLL_INTERVAL", "10") or 10)
+
+    monitor_task = None
+    monitor = None
+    if instagram_username and instagram_password and target_chat_id != 0:
+        try:
+            from src.instagram_monitor import InstagramMonitor
+
+            monitor = InstagramMonitor(
+                bot,
+                instagram_username,
+                instagram_password,
+                instagram_account,
+                target_chat_id,
+                interval=poll_interval,
+            )
+            monitor_task = asyncio.create_task(monitor.start())
+            logger.info("✅ Instagram монитор запущен фоном")
+        except Exception as e:
+            logger.exception("Не удалось запустить Instagram монитор: %s", e)
+
     # Удаление старых webhooks и ожидающих обновлений
     # Важно для чистого запуска polling после использования webhooks
     await bot.delete_webhook(drop_pending_updates=True)
@@ -97,6 +123,19 @@ async def main():
     try:
         await dp.start_polling(bot)
     finally:
+        # Останавливаем монитор если он запущен
+        try:
+            if monitor:
+                await monitor.stop()
+            if monitor_task:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception("Ошибка при остановке монитора: %s", e)
+
         await bot.session.close()
         logger.info("🛑 Бот остановлен")
 

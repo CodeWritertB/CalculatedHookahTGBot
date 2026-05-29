@@ -152,6 +152,7 @@ python bot.py
 - `src/database.py` — хранение, запросы и логика БД
 - `src/handlers.py` — команды, callback и FSM
 - `src/keyboards.py` — inline-клавиатуры
+- `src/instagram_parser.py` — парсинг постов и историй Instagram
 
 ## 📦 Зависимости
 
@@ -164,13 +165,55 @@ pip install -r requirements.txt
 ```text
 aiogram==3.24.0
 python-dotenv==1.0.1
+instagrapi==2.0.0
+requests==2.32.3
+Pillow==10.2.0
 ```
+
+## 📸 Instagram парсер (админ функции)
+
+Бот может парсить посты и истории из Instagram профиля и отправлять их в Telegram чат.
+
+### Подготовка
+
+1. В `.env` добавьте:
+   ```env
+   # Учетные данные Instagram аккаунта
+   INSTAGRAM_USERNAME=username
+   INSTAGRAM_PASSWORD=password
+   
+   # Аккаунт для парсинга
+   INSTAGRAM_ACCOUNT=mount.bar
+   
+   # ID Telegram чата для отправки контента
+   TARGET_CHAT_ID=-1003826622440
+   ```
+
+2. **ВАЖНО**: Используйте отдельный Instagram аккаунт для парсинга. Instagram может заблокировать аккаунт за частые запросы!
+
+### Команды
+
+**Парсинг постов:**
+```
+/parse_posts [количество]
+```
+- `количество` — опционально, количество постов (макс. 50, по умолчанию 5)
+- Пример: `/parse_posts 10`
+
+**Парсинг историй:**
+```
+/parse_stories
+```
+- Загружает все активные истории профиля
+
+Обе команды доступны только админам.
 
 ## 🚨 Типичные ошибки
 
 - Токен не указан в `.env`
 - Неверный `ADMIN_USER_ID`
 - Бот не запущен
+- Instagram учетные данные не добавлены в `.env` (для парсера)
 
 ### Если бот не отвечает
 
