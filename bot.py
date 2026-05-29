@@ -82,10 +82,10 @@ async def main():
     dp.include_router(router)
 
     # Глобальный обработчик ошибок - логируем все необработанные исключения
-    async def _on_error(update, exception):
+    async def errors_handler(update, exception):
         logger.exception("Unhandled exception while processing update: %s", exception)
 
-    dp.errors.register(_on_error)
+    dp.errors.register(errors_handler)
     
     # Удаление старых webhooks и ожидающих обновлений
     # Важно для чистого запуска polling после использования webhooks

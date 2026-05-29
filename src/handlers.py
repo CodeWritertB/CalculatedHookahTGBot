@@ -1260,17 +1260,28 @@ async def cmd_admin_set_role(callback: CallbackQuery):
         return
 
     # Формат: admin_set_role_{user_id}_{role}
-    parts = callback.data.replace("admin_set_role_", "").rsplit("_", 1)
-    if len(parts) != 2:
+    # Нужно правильно разбить, так как role может содержать underscores (hookah_master)
+    valid_roles = ["member", "manager", "hookah_master", "supervisor"]
+    data_str = callback.data.replace("admin_set_role_", "")
+
+    new_role = None
+    user_id_str = data_str
+    
+    # Проверяем с конца, какая роль совпадает
+    for role in valid_roles:
+        if data_str.endswith("_" + role):
+            new_role = role
+            user_id_str = data_str[: - len("_" + role)]
+            break
+
+    if new_role is None or not user_id_str.isdigit():
         await callback.answer("Ошибка данных")
         return
 
-    target_user_id = int(parts[0])
-    new_role = parts[1]
-
-    valid_roles = ["member", "manager", "hookah_master", "supervisor"]
-    if new_role not in valid_roles:
-        await callback.answer("Недопустимая роль")
+    try:
+        target_user_id = int(user_id_str)
+    except ValueError:
+        await callback.answer("Ошибка при обработке ID пользователя")
         return
 
     db.set_user_global_role(target_user_id, new_role)
