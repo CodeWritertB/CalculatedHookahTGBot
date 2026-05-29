@@ -248,7 +248,6 @@ def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👥 Участники", callback_data="admin_members")],
         [InlineKeyboardButton(text="📋 Смены", callback_data="admin_shifts")],
         [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin_users")],
-        [InlineKeyboardButton(text="🔧 Роли", callback_data="admin_roles")],
         [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main_menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -286,6 +285,7 @@ def get_admin_user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Получить клавиатуру для управления конкретным пользователем."""
     buttons = [
         [InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"admin_edit_user_name_{user_id}")],
+        [InlineKeyboardButton(text="🔧 Изменить роль", callback_data=f"admin_user_role_{user_id}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
