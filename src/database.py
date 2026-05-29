@@ -30,7 +30,9 @@ def get_connection() -> sqlite3.Connection:
     Returns:
         sqlite3.Connection: Объект соединения с БД
     """
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute('PRAGMA busy_timeout = 30000')
+    return conn
 
 
 def get_moscow_datetime() -> datetime:
@@ -164,16 +166,20 @@ def add_column_if_not_exists(conn: sqlite3.Connection, table: str, definition: s
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
-def log_hookah_event(hookah_id: int, event_type: str, user_id: int = None, comment: str = None) -> None:
-    conn = get_connection()
+def log_hookah_event(hookah_id: int, event_type: str, user_id: int = None, comment: str = None, conn: sqlite3.Connection = None) -> None:
+    close_conn = False
+    if conn is None:
+        conn = get_connection()
+        close_conn = True
     cursor = conn.cursor()
     now = get_moscow_now_str("%Y-%m-%d %H:%M:%S")
     cursor.execute(
         "INSERT INTO hookah_events (hookah_id, event_type, user_id, event_time, comment) VALUES (?, ?, ?, ?, ?)",
         (hookah_id, event_type, user_id, now, comment)
     )
-    conn.commit()
-    conn.close()
+    if close_conn:
+        conn.commit()
+        conn.close()
 
 
 def get_hookah_events(hookah_id: int) -> List[Tuple]:
@@ -499,13 +505,13 @@ def update_hookah(
             "UPDATE hookahs SET hookah_type = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
             (hookah_type, now, updated_by, hookah_id)
         )
-        log_hookah_event(hookah_id, 'updated_type', updated_by, f"Изменен тип на {hookah_type}")
+        log_hookah_event(hookah_id, 'updated_type', updated_by, f"Изменен тип на {hookah_type}", conn)
     if table_name is not None:
         cursor.execute(
             "UPDATE hookahs SET table_name = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
             (table_name, now, updated_by, hookah_id)
         )
-        log_hookah_event(hookah_id, 'updated_table', updated_by, f"Изменен стол на {table_name}")
+        log_hookah_event(hookah_id, 'updated_table', updated_by, f"Изменен стол на {table_name}", conn)
     conn.commit()
     conn.close()
 
@@ -553,7 +559,7 @@ def update_hookah_strength_and_coldness(
         if order_comment is not None:
             comment_parts.append(f"Комментарий: {order_comment}")
         
-        log_hookah_event(hookah_id, 'updated_params', updated_by, ", ".join(comment_parts))
+        log_hookah_event(hookah_id, 'updated_params', updated_by, ", ".join(comment_parts), conn)
     
     conn.commit()
     conn.close()
@@ -561,9 +567,9 @@ def update_hookah_strength_and_coldness(
 
 def delete_hookah(hookah_id: int, deleted_by: int = None) -> None:
     """Удалить кальян из базы данных."""
-    log_hookah_event(hookah_id, 'deleted', deleted_by, 'Кальян удален')
     conn = get_connection()
     cursor = conn.cursor()
+    log_hookah_event(hookah_id, 'deleted', deleted_by, 'Кальян удален', conn)
     cursor.execute("DELETE FROM hookahs WHERE id = ?", (hookah_id,))
     conn.commit()
     conn.close()
@@ -595,13 +601,13 @@ def set_hookah_status(hookah_id: int, status: str, user_id: int = None) -> None:
             "UPDATE hookahs SET status = 'in_packing', accepted_by = ?, accepted_at = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
             (user_id, now, now, user_id, hookah_id)
         )
-        log_hookah_event(hookah_id, 'accepted', user_id, 'Кальян принят мастером')
+        log_hookah_event(hookah_id, 'accepted', user_id, 'Кальян принят мастером', conn)
     elif status == 'ready':
         cursor.execute(
             "UPDATE hookahs SET status = 'ready_for_guest', ready_at = ?, last_updated_at = ?, last_updated_by = ? WHERE id = ?",
             (now, now, user_id, hookah_id)
         )
-        log_hookah_event(hookah_id, 'ready', user_id, 'Кальян готов к выдаче')
+        log_hookah_event(hookah_id, 'ready', user_id, 'Кальян готов к выдаче', conn)
     conn.commit()
     conn.close()
 

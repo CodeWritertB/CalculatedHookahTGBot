@@ -191,19 +191,37 @@ async def send_shift_report(bot, shift: tuple) -> None:
         logger.exception(f"Не удалось отправить отчет по смене #{shift[0]}: {exc}")
 
 
-async def notify_new_hookah(bot, hookah_id: int, hookah_type: str, table_name: str, shift_id: int) -> None:
-    message = (
-        f"📣 Новый кальян #{hookah_id}\n"
-        f"🌿 Тип: {hookah_type}\n"
-        f"📍 Стол: {table_name}\n"
-        "Статус: Новый заказ\n"
-        "Пожалуйста, подтвердите или начните работу."
-    )
+async def notify_new_hookah(bot, hookah_id: int) -> None:
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        return
+
+    hookah_type = hookah[2]
+    table_name = hookah[3]
+    strength = hookah[12] if len(hookah) > 12 else None
+    coldness = hookah[13] if len(hookah) > 13 else None
+    order_comment = hookah[14] if len(hookah) > 14 else None
+
+    message = [
+        f"📣 Новый кальян #{hookah_id}",
+        f"🌿 Тип: {hookah_type}",
+        f"📍 Стол: {table_name}",
+    ]
+    if strength is not None:
+        message.append(f"🔥 Крепость: {strength}/10")
+    if coldness:
+        message.append(f"❄️ Холодность: {coldness}")
+    if order_comment:
+        message.append(f"💬 Комментарий: {order_comment}")
+    message.append("Статус: Новый заказ")
+    message.append("Пожалуйста, подтвердите или начните работу.")
+
+    text = "\n".join(message)
     for user_id in db.get_users_with_notifications_enabled():
         try:
             await bot.send_message(
                 user_id,
-                message,
+                text,
                 reply_markup=get_new_hookah_notification_keyboard(hookah_id)
             )
         except Exception:
@@ -217,17 +235,58 @@ async def notify_hookah_ready(bot, hookah_id: int) -> None:
 
     hookah_type = hookah[2]
     table_name = hookah[3]
+    shift_id = hookah[1]
     message = (
         f"🎯 Кальян #{hookah_id} готов к выдаче!\n"
         f"🌿 Тип: {hookah_type}\n"
         f"📍 Стол: {table_name}\n"
-        "Статус: Готов к выдаче" 
+        "Статус: Готов к выдаче"
     )
-    for user_id in db.get_users_with_notifications_enabled():
+
+    recipients = set(db.get_users_with_notifications_enabled())
+    recipients.update(user_id for user_id, _, _, _ in db.get_shift_users(shift_id))
+
+    for user_id in recipients:
         try:
             await bot.send_message(user_id, message)
         except Exception:
             continue
+
+
+async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) -> None:
+    if REPORT_CHAT_ID == 0:
+        logger.warning("Отчетный чат не настроен: REPORT_CHAT_ID=0")
+        return
+
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        return
+
+    accepted_by_username = db.get_username(accepted_by_user_id)
+    accepted_by_label = f"@{accepted_by_username}" if accepted_by_username else str(accepted_by_user_id)
+    strength = hookah[12] if len(hookah) > 12 else None
+    coldness = hookah[13] if len(hookah) > 13 else None
+    order_comment = hookah[14] if len(hookah) > 14 else None
+
+    message_lines = [
+        f"✅ Кальян #{hookah_id} принят в работу",
+        f"🌿 Тип: {hookah[2]}",
+        f"📍 Стол: {hookah[3]}",
+        f"👤 Принял: {accepted_by_label}",
+    ]
+    if strength is not None:
+        message_lines.append(f"🔥 Крепость: {strength}/10")
+    if coldness:
+        message_lines.append(f"❄️ Холодность: {coldness}")
+    if order_comment:
+        message_lines.append(f"💬 Комментарий: {order_comment}")
+    message_lines.append("Статус: В работе")
+
+    try:
+        await bot.send_message(REPORT_CHAT_ID, "\n".join(message_lines))
+        logger.info(f"Notification sent to report chat {REPORT_CHAT_ID} for accepted hookah #{hookah_id}")
+    except Exception as exc:
+        logger.exception(f"Не удалось отправить уведомление об принятии кальяна #{hookah_id}: {exc}")
 
 
 # ==================== FSM STATES (Состояния диалога) ====================
@@ -658,7 +717,7 @@ async def process_hookah_comment(message: Message, state: FSMContext):
         reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
     logger.info(f"Кальян добавлен: {hookah_type} на стол {table_name}, сила {strength}, холодность {coldness}")
-    await notify_new_hookah(message.bot, hookah_id, hookah_type, table_name, shift[0])
+    await notify_new_hookah(message.bot, hookah_id)
     await state.clear()
 
 
@@ -940,7 +999,7 @@ async def cmd_admin_shifts(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin_shift_"))
+@router.callback_query(F.data.regexp(r"^admin_shift_\d+$"))
 async def cmd_admin_shift_detail(callback: CallbackQuery):
     """Обработчик просмотра и управления конкретной сменой из админки."""
     if not is_admin(callback.from_user.id):
@@ -1007,9 +1066,7 @@ async def cmd_admin_shift_hookahs(callback: CallbackQuery):
 
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_shift_{shift_id}")]
-        ])
+        reply_markup=get_hookahs_list_keyboard(hookahs, shift_id, back_callback=f"admin_shift_{shift_id}")
     )
     await callback.answer()
 
@@ -1660,10 +1717,14 @@ async def cmd_accept_hookah(callback: CallbackQuery):
         return
 
     db.set_hookah_status(hookah_id, 'accepted', callback.from_user.id)
-    await callback.message.edit_text(
-        f"✅ Кальян #{hookah_id} принят в работу.",
-        reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), role)
-    )
+    await notify_hookah_accepted(callback.bot, hookah_id, callback.from_user.id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        await callback.message.edit_text(
+            f"✅ Кальян #{hookah_id} принят в работу.",
+            reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), role)
+        )
     await callback.answer()
 
 
@@ -2023,7 +2084,7 @@ async def cmd_shift_details(callback: CallbackQuery):
     
     await callback.message.edit_text(
         text,
-        reply_markup=get_main_menu_keyboard(get_current_shift() is not None, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
 

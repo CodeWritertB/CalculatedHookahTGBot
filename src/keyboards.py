@@ -167,7 +167,7 @@ def get_coldness_keyboard() -> InlineKeyboardMarkup:
 
 # ==================== ПРОСМОТР КАЛЬЯНОВ ====================
 
-def get_hookahs_list_keyboard(hookahs: list, shift_id: int) -> InlineKeyboardMarkup:
+def get_hookahs_list_keyboard(hookahs: list, shift_id: int, back_callback: str = "back_to_menu") -> InlineKeyboardMarkup:
     """
     Получить клавиатуру со списком всех кальянов за смену.
     
@@ -177,6 +177,7 @@ def get_hookahs_list_keyboard(hookahs: list, shift_id: int) -> InlineKeyboardMar
     Args:
         hookahs (list): Список кортежей с данными кальянов
         shift_id (int): ID смены (используется для контекста)
+        back_callback (str): callback_data для кнопки назад
         
     Returns:
         InlineKeyboardMarkup: Кнопки со списком кальянов
@@ -201,10 +202,10 @@ def get_hookahs_list_keyboard(hookahs: list, shift_id: int) -> InlineKeyboardMar
             callback_data=f"view_{hookah[0]}"
         )])
     
-    # Кнопка для возврата в главное меню
+    # Кнопка для возврата
     buttons.append([InlineKeyboardButton(
-        text="⬅️ Назад в меню",
-        callback_data="back_to_menu"
+        text="⬅️ Назад",
+        callback_data=back_callback
     )])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)

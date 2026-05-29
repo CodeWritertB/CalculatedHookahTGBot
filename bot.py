@@ -82,7 +82,7 @@ async def main():
     dp.include_router(router)
 
     # Глобальный обработчик ошибок - логируем все необработанные исключения
-    async def errors_handler(update, exception):
+    async def errors_handler(update=None, exception=None, *args, **kwargs):
         logger.exception("Unhandled exception while processing update: %s", exception)
 
     dp.errors.register(errors_handler)
