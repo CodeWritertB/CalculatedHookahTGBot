@@ -64,7 +64,7 @@ def init_db() -> None:
         - table_name: Название стола
         - created_at: Время добавления кальяна (YYYY-MM-DD HH:MM:SS)
         - status: Статус заказа (new_order, in_packing, ready_for_guest)
-        - strength: Сила кальяна (1-10)
+        - strength: Крепость кальяна (1-10)
         - coldness: Холодность кальяна
         - order_comment: Комментарий к заказу
     """
@@ -436,7 +436,7 @@ def add_hookah(
         shift_id (int): ID смены
         hookah_type (str): Тип кальяна ("Стандарт" или "Сигара")
         table_name (str): Название стола
-        strength (int): Сила кальяна от 1 до 10
+        strength (int): Крепость кальяна от 1 до 10
         coldness (str): Холодность кальяна
         order_comment (str): Комментарий для заказа
         created_by (int): user_id того, кто добавил кальян
@@ -454,7 +454,7 @@ def add_hookah(
     hookah_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    comment = f"Сила {strength}, Холодность {coldness}"
+    comment = f"Крепость {strength}, Холодность {coldness}"
     if order_comment:
         comment += f", Комментарий: {order_comment}"
     log_hookah_event(hookah_id, 'created', created_by, f"Добавлен кальян {hookah_type} на стол {table_name}. {comment}")
@@ -547,7 +547,7 @@ def update_hookah_strength_and_coldness(
         
         comment_parts = []
         if strength is not None:
-            comment_parts.append(f"Сила изменена на {strength}")
+            comment_parts.append(f"Крепость изменена на {strength}")
         if coldness is not None:
             comment_parts.append(f"Холодность {coldness}")
         if order_comment is not None:

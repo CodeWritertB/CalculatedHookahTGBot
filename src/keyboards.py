@@ -26,11 +26,11 @@ TABLES = [
 # Типы кальянов
 HOOKAH_TYPES = ["Стандарт", "Сигара"]
 
-# Уровни силы кальяна
+# Уровни крепости кальяна
 STRENGTH_LEVELS = list(range(1, 11))
 
-# Варианты ледяной/тепловой подачи
-COLDNESS_OPTIONS = ["Холодный", "Средний", "Теплый"]
+# Варианты холодка
+COLDNESS_OPTIONS = ["Без холодка", "Чуть-чуть", "Холодный", "Чистая Супернова"]
 
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
@@ -225,7 +225,7 @@ def get_hookah_actions_keyboard(hookah: tuple, role: str) -> InlineKeyboardMarku
     if role in ('admin', 'manager'):
         buttons.append([InlineKeyboardButton(text="✏️ Изменить тип", callback_data=f"edit_type_{hookah_id}")])
         buttons.append([InlineKeyboardButton(text="📍 Изменить стол", callback_data=f"edit_table_{hookah_id}")])
-        buttons.append([InlineKeyboardButton(text="� Изменить силу", callback_data=f"edit_strength_{hookah_id}")])
+        buttons.append([InlineKeyboardButton(text="✏️ Изменить крепость", callback_data=f"edit_strength_{hookah_id}")])
         buttons.append([InlineKeyboardButton(text="❄️ Изменить холодность", callback_data=f"edit_coldness_{hookah_id}")])
         buttons.append([InlineKeyboardButton(text="💬 Изменить комментарий", callback_data=f"edit_comment_{hookah_id}")])
         buttons.append([InlineKeyboardButton(text="�🗑️ Удалить", callback_data=f"delete_{hookah_id}")])

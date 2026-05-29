@@ -531,7 +531,7 @@ async def process_table(callback: CallbackQuery, state: FSMContext):
     await state.update_data(table_name=table)
     await callback.message.edit_text(
         f"✅ Выбран стол: {table}\n\n"
-        "🔥 Теперь выберите силу кальяна (1-10):",
+        "🔥 Теперь выберите крепость (1-10):",
         reply_markup=get_strength_keyboard()
     )
     await state.set_state(AddHookah.waiting_strength)
@@ -544,7 +544,7 @@ async def process_hookah_strength(callback: CallbackQuery, state: FSMContext):
     strength = int(callback.data.replace("strength_", ""))
     await state.update_data(strength=strength)
     await callback.message.edit_text(
-        f"🔥 Сила выбрана: {strength}/10\n\n"
+        f"🔥 Крепость выбрана: {strength}/10\n\n"
         "❄️ Выберите степень холодности:",
         reply_markup=get_coldness_keyboard()
     )
@@ -626,7 +626,7 @@ async def process_hookah_comment(message: Message, state: FSMContext):
         f"✅ Кальян успешно добавлен!\n\n"
         f"🌿 Тип: {hookah_type}\n"
         f"📍 Стол: {table_name}\n"
-        f"🔥 Сила: {strength}/10\n"
+        f"🔥 Крепость: {strength}/10\n"
         f"❄️ Холодность: {coldness}\n"
         f"💬 Комментарий: {comment_text or 'Без комментария'}\n"
         f"⏰ Время: {now}",
@@ -1593,7 +1593,7 @@ async def cmd_view_hookah(callback: CallbackQuery):
     text += f"🌿 Тип: {hookah[2]}\n"
     text += f"📍 Стол: {hookah[3]}\n"
     if strength is not None:
-        text += f"🔥 Сила: {strength}/10\n"
+        text += f"🔥 Крепость: {strength}/10\n"
     if coldness:
         text += f"❄️ Холодность: {coldness}\n"
     if order_comment:
@@ -1852,7 +1852,7 @@ async def process_edit_strength(callback: CallbackQuery, state: FSMContext):
     )
     
     await callback.message.edit_text(
-        f"✅ Сила кальяна успешно изменена на: {strength}/10",
+        f"✅ Крепость кальяна успешно изменена на: {strength}/10",
         reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), get_user_role(db.get_hookah_by_id(hookah_id)[1], callback.from_user.id))
     )
     await state.clear()
