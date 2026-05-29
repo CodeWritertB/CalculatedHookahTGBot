@@ -170,6 +170,7 @@ async def cmd_start(message: Message):
         message (Message): Объект сообщения от пользователя
     """
     user_id = message.from_user.id
+    logger.info(f"Пользователь {user_id} запросил /start; is_admin={is_admin(user_id)}")
     await message.answer(
         "🍃 Добро пожаловать в бот учета кальянов!\n\n"
         "Это приложение поможет вам вести учет всех кальянов за смену.\n\n"

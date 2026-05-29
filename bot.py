@@ -30,16 +30,16 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
-from src.logging_setup import configure_logging
-
-import src.database as db
-from src.handlers import router
-
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
+from src.logging_setup import configure_logging
+
 # Настройка логирования (консоль + файл)
 configure_logging()
+
+import src.database as db
+from src.handlers import router
 logger = logging.getLogger(__name__)
 
 
