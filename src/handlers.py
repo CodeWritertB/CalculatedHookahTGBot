@@ -33,6 +33,7 @@ from src.keyboards import (
     get_coldness_keyboard,
     get_hookahs_list_keyboard,
     get_hookah_actions_keyboard,
+    get_new_hookah_notification_keyboard,
     get_history_keyboard,
     get_profile_keyboard,
     get_admin_menu_keyboard,
@@ -196,7 +197,31 @@ async def notify_new_hookah(bot, hookah_id: int, hookah_type: str, table_name: s
         f"🌿 Тип: {hookah_type}\n"
         f"📍 Стол: {table_name}\n"
         "Статус: Новый заказ\n"
-        "Пожалуйста, подтвердите или начните работу." 
+        "Пожалуйста, подтвердите или начните работу."
+    )
+    for user_id in db.get_users_with_notifications_enabled():
+        try:
+            await bot.send_message(
+                user_id,
+                message,
+                reply_markup=get_new_hookah_notification_keyboard(hookah_id)
+            )
+        except Exception:
+            continue
+
+
+async def notify_hookah_ready(bot, hookah_id: int) -> None:
+    hookah = db.get_hookah_by_id(hookah_id)
+    if not hookah:
+        return
+
+    hookah_type = hookah[2]
+    table_name = hookah[3]
+    message = (
+        f"🎯 Кальян #{hookah_id} готов к выдаче!\n"
+        f"🌿 Тип: {hookah_type}\n"
+        f"📍 Стол: {table_name}\n"
+        "Статус: Готов к выдаче" 
     )
     for user_id in db.get_users_with_notifications_enabled():
         try:
@@ -1661,10 +1686,14 @@ async def cmd_ready_hookah(callback: CallbackQuery):
         return
 
     db.set_hookah_status(hookah_id, 'ready', callback.from_user.id)
-    await callback.message.edit_text(
-        f"✅ Кальян #{hookah_id} помечен как готовый к выдаче.",
-        reply_markup=get_hookah_actions_keyboard(db.get_hookah_by_id(hookah_id), role)
-    )
+    await notify_hookah_ready(callback.bot, hookah_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        # Если сообщение не получилось удалить, обновляем текст, чтобы не оставлять кнопку активной.
+        await callback.message.edit_text(
+            f"✅ Кальян #{hookah_id} помечен как готовый к выдаче."
+        )
     await callback.answer()
 
 

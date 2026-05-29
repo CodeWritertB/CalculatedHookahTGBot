@@ -233,6 +233,14 @@ def get_hookah_actions_keyboard(hookah: tuple, role: str) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_new_hookah_notification_keyboard(hookah_id: int) -> InlineKeyboardMarkup:
+    """Получить клавиатуру уведомления о новом кальяне."""
+    buttons = [
+        [InlineKeyboardButton(text="✅ Подтвердить / начать работу", callback_data=f"accept_{hookah_id}")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_profile_keyboard() -> InlineKeyboardMarkup:
     """Получить клавиатуру профиля пользователя."""
     buttons = [
