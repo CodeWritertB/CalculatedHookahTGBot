@@ -26,6 +26,7 @@ from aiogram.filters import Command
 import src.database as db
 from src.keyboards import (
     get_main_menu_keyboard,
+    get_shift_management_keyboard,
     get_hookah_type_keyboard,
     get_tables_keyboard,
     get_strength_keyboard,
@@ -160,24 +161,60 @@ async def cmd_start(message: Message):
     Обработчик команды /start
     
     Отправляет приветственное сообщение и показывает главное меню.
-    Проверяет, открыта ли текущая смена и выводит соответствующие кнопки.
     
     Args:
         message (Message): Объект сообщения от пользователя
     """
-    shift = get_current_shift()
-    is_open = shift is not None
-    
     user_id = message.from_user.id
     await message.answer(
         "🍃 Добро пожаловать в бот учета кальянов!\n\n"
         "Это приложение поможет вам вести учет всех кальянов за смену.\n\n"
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard(is_open, is_admin(user_id))
+        reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
 
 
 # ==================== УПРАВЛЕНИЕ СМЕНАМИ ====================
+
+@router.callback_query(F.data == "shift_management")
+async def cmd_shift_management(callback: CallbackQuery):
+    """
+    Обработчик кнопки 'Смена' в главном меню.
+    
+    Показывает текущий статус смены (открыта/закрыта) и соответствующие опции.
+    """
+    shift = db.get_current_shift()
+    is_open = shift is not None
+    user_id = callback.from_user.id
+    
+    status_text = "✅ Смена открыта" if is_open else "❌ Смена закрыта"
+    
+    if is_open:
+        shift_info = f"{status_text}\n\n🕐 Открыта: {shift[1]}\n\nВыберите действие:"
+    else:
+        shift_info = f"{status_text}\n\nНет активной смены. Выберите действие:"
+    
+    await callback.message.edit_text(
+        shift_info,
+        reply_markup=get_shift_management_keyboard(is_open, is_admin(user_id))
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_main_menu")
+async def cmd_back_to_main_menu(callback: CallbackQuery):
+    """
+    Обработчик для возврата в главное меню.
+    """
+    user_id = callback.from_user.id
+    await callback.message.edit_text(
+        "🍃 Добро пожаловать в бот учета кальянов!\n\n"
+        "Это приложение поможет вам вести учет всех кальянов за смену.\n\n"
+        "Выберите действие:",
+        reply_markup=get_main_menu_keyboard(is_admin(user_id))
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data == "open_shift")
 async def cmd_open_shift(callback: CallbackQuery):
@@ -209,7 +246,7 @@ async def cmd_open_shift(callback: CallbackQuery):
         f"🆔 ID смены: {shift_id}\n"
         f"⏰ Время: {db.get_moscow_datetime().strftime('%H:%M:%S')}\n\n"
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard(True, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
     logger.info(f"Смена #{shift_id} открыта")
@@ -277,7 +314,7 @@ async def cmd_confirm_close(callback: CallbackQuery):
         f"📊 Всего кальянов за смену: {total}\n"
         f"🕐 Время закрытия: {db.get_moscow_datetime().strftime('%H:%M:%S')}\n\n"
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard(False, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
     logger.info(f"Смена #{shift[0]} закрыта с {total} кальянами")
@@ -447,7 +484,7 @@ async def process_hookah_comment(message: Message, state: FSMContext):
         f"❄️ Холодность: {coldness}\n"
         f"💬 Комментарий: {comment_text or 'Без комментария'}\n"
         f"⏰ Время: {now}",
-        reply_markup=get_main_menu_keyboard(True, is_admin(user_id))
+        reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
     logger.info(f"Кальян добавлен: {hookah_type} на стол {table_name}, сила {strength}, холодность {coldness}")
     await notify_new_hookah(message.bot, hookah_id, hookah_type, table_name, shift[0])
@@ -539,7 +576,7 @@ async def cmd_join_shift(callback: CallbackQuery):
 
     await callback.message.edit_text(
         "✅ Вы успешно вступили в смену! Теперь вы видите все кальяны этой смены.",
-        reply_markup=get_main_menu_keyboard(True, is_admin(user_id))
+        reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
     await callback.answer()
     logger.info(f"User {user_id} joined shift #{shift[0]} as member")
@@ -570,7 +607,7 @@ async def cmd_take_manager(callback: CallbackQuery):
 
     await callback.message.edit_text(
         "✅ Вы стали менеджером смены. Вам доступны все кальяны этой смены.",
-        reply_markup=get_main_menu_keyboard(True, is_admin(user_id))
+        reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
     await callback.answer()
     logger.info(f"User {user_id} assigned as manager for shift #{shift[0]}")
@@ -578,72 +615,204 @@ async def cmd_take_manager(callback: CallbackQuery):
 
 @router.callback_query(F.data == "profile")
 async def cmd_profile(callback: CallbackQuery):
+    """Обработчик кнопки 'Профиль'."""
     user_id = callback.from_user.id
     username = callback.from_user.username or callback.from_user.full_name or ""
     db.add_user_if_not_exists(user_id, username)
-    enabled = db.get_notification_status(user_id)
-    stored_name = db.get_username(user_id) or username
-
-    shift = get_current_shift()
-    role = 'admin' if is_admin(user_id) else None
-    if not role and shift:
-        role = db.get_shift_user_role(shift[0], user_id)
-    role_label = ROLE_LABELS.get(role, 'Не в смене')
-
+    
+    profile = db.get_user_profile(user_id)
+    display_name = profile[2] if profile else username
+    global_role = profile[3] if profile else "member"
+    
     text = (
-        "👤 Профиль пользователя:\n\n"
-        f"Статус: {role_label}\n"
-        f"Имя: {stored_name}\n\n"
+        "👤 Ваш профиль:\n\n"
+        f"Имя: {display_name or username or 'Не указано'}\n"
+        f"Роль: {global_role}\n"
+        f"Username: @{username}\n"
     )
-
-    if role == 'hookah_master':
-        your_shift_hookahs, standard_hookahs, cigar_hookahs, total_hookahs = db.get_user_master_hookah_stats(user_id)
-        text += (
-            f"📌 Кальянов в твоих сменах: {your_shift_hookahs}\n"
-            f"   🌿 Стандарт: {standard_hookahs}\n"
-            f"   🚬 Сигара: {cigar_hookahs}\n"
-            f"📊 Всего кальянов в системе: {total_hookahs}\n\n"
-        )
-    else:
-        text += "📌 Статистика кальянов доступна только кальянным мастерам.\n\n"
-
-    total_shifts, month_shifts = db.get_user_shift_stats(user_id)
-    text += (
-        f"📆 Смен всего: {total_shifts}\n"
-        f"📅 За месяц: {month_shifts}\n\n"
-        "Вы можете включить или выключить уведомления о новых кальянах."
-    )
-
+    
     await callback.message.edit_text(
         text,
-        reply_markup=get_profile_keyboard(enabled, is_admin(user_id))
+        reply_markup=get_profile_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "profile_stats")
+async def cmd_profile_stats(callback: CallbackQuery):
+    """Обработчик просмотра статистики профиля."""
+    user_id = callback.from_user.id
+    
+    stats = db.get_user_stats_full(user_id)
+    
+    if not stats:
+        await callback.message.edit_text(
+            "❌ Профиль не найден.",
+            reply_markup=get_profile_keyboard()
+        )
+        await callback.answer()
+        return
+    
+    text = (
+        f"📊 Статистика {stats['display_name'] or stats['username']}:\n\n"
+        f"Кальянов добавлено: {stats['total_hookahs']}\n"
+    )
+    
+    if stats['hookah_types']:
+        text += "   По типам:\n"
+        for hookah_type, count in stats['hookah_types'].items():
+            text += f"   - {hookah_type}: {count}\n"
+    
+    text += (
+        f"\nСмен всего: {stats['total_shifts']}\n"
+        f"В этом месяце: {stats['month_shifts']}\n"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_profile_keyboard()
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_panel")
 async def cmd_admin_panel(callback: CallbackQuery):
-    shift = get_current_shift()
-    text = "🛠️ Админская панель\n\n"
-    if shift:
-        users = db.get_shift_users(shift[0])
-        counts = {role: 0 for role in ROLE_LABELS}
-        for _, _, role, _ in users:
-            if role in counts:
-                counts[role] += 1
-        text += (
-            f"Текущая смена: #{shift[0]}\n"
-            f"Менеджеров: {counts.get('manager', 0)}\n"
-            f"Кальянных мастеров: {counts.get('hookah_master', 0)}\n"
-            f"Управляющих: {counts.get('supervisor', 0)}\n"
-            f"Участников: {counts.get('member', 0)}\n\n"
+    """Обработчик админ-панели."""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.message.edit_text(
+            "❌ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_keyboard(is_admin(user_id))
         )
-    text += get_work_schedule_text()
+        await callback.answer()
+        return
+    
+    shift = db.get_current_shift()
+    text = "⚙️ Админ панель\n\n"
+    
+    if shift:
+        text += f"Текущая смена: #{shift[0]}\n"
+        text += f"Открыта: {shift[1]}\n"
+        text += f"Кальянов в смене: {shift[4]}\n\n"
+    else:
+        text += "Нет открытой смены\n\n"
+    
+    text += "Выберите действие:"
+    
     await callback.message.edit_text(
         text,
         reply_markup=get_admin_menu_keyboard()
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_members")
+async def cmd_admin_members(callback: CallbackQuery):
+    """Обработчик управления участниками смены."""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.message.edit_text(
+            "❌ У вас нет доступа.",
+            reply_markup=get_main_menu_keyboard(is_admin(user_id))
+        )
+        await callback.answer()
+        return
+    
+    shift = db.get_current_shift()
+    
+    if not shift:
+        await callback.message.edit_text(
+            "❌ Нет открытой смены.",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        await callback.answer()
+        return
+    
+    users = db.get_shift_users(shift[0])
+    text = f"👥 Участники смены #{shift[0]}:\n\n"
+    
+    if not users:
+        text += "Нет участников в смене."
+    else:
+        for user_id_shift, username, role, joined_at in users:
+            display_name = db.get_user_display_name(user_id_shift)
+            text += f"• {display_name} (@{username})\n"
+            text += f"  Роль: {role}\n"
+            text += f"  Присоединилась: {joined_at}\n\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_shifts")
+async def cmd_admin_shifts(callback: CallbackQuery):
+    """Обработчик управления сменами."""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.message.edit_text(
+            "❌ У вас нет доступа.",
+            reply_markup=get_main_menu_keyboard(is_admin(user_id))
+        )
+        await callback.answer()
+        return
+    
+    shifts = db.get_all_shifts()[:5]  # Последние 5 смен
+    text = "📋 Последние 5 смен:\n\n"
+    
+    if not shifts:
+        text += "Нет смен в системе."
+    else:
+        for shift_id, open_time, close_time, is_open, total_hookahs in shifts:
+            status = "Открыта" if is_open else "Закрыта"
+            text += f"Смена #{shift_id}\n"
+            text += f"Открыта: {open_time}\n"
+            text += f"Статус: {status}\n"
+            text += f"Кальянов: {total_hookahs}\n\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_users")
+async def cmd_admin_users(callback: CallbackQuery):
+    """Обработчик просмотра пользователей и их ролей."""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.message.edit_text(
+            "❌ У вас нет доступа.",
+            reply_markup=get_main_menu_keyboard(is_admin(user_id))
+        )
+        await callback.answer()
+        return
+    
+    users = db.get_all_users()[:10]  # Последние 10 пользователей
+    text = "👤 Пользователи системы:\n\n"
+    
+    if not users:
+        text += "Нет пользователей."
+    else:
+        for user_id_db, username, display_name, global_role in users:
+            name = display_name or username or f"User {user_id_db}"
+            text += f"• {name}\n"
+            text += f"  Роль: {global_role}\n"
+            text += f"  ID: {user_id_db}\n\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_menu_keyboard()
+    )
+    await callback.answer()
+
 
 
 @router.callback_query(F.data == "admin_schedule")
@@ -700,7 +869,7 @@ async def cmd_confirm_delete_shift(callback: CallbackQuery):
     db.delete_shift(shift[0])
     await callback.message.edit_text(
         "✅ Текущая смена удалена вместе со всеми данными.",
-        reply_markup=get_main_menu_keyboard(False, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
 
@@ -712,7 +881,7 @@ async def cmd_toggle_notifications(callback: CallbackQuery):
     db.set_notification_status(user_id, not current)
     await callback.message.edit_text(
         f"🔔 Уведомления {'включены' if not current else 'выключены'}.",
-        reply_markup=get_profile_keyboard(not current, is_admin(user_id))
+        reply_markup=get_profile_keyboard()
     )
     await callback.answer()
 
@@ -993,7 +1162,7 @@ async def cmd_delete_hookah(callback: CallbackQuery):
     await callback.message.edit_text(
         f"✅ Кальян #{hookah_id} успешно удален.\n\n"
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard(is_shift_open, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
     logger.info(f"Кальян #{hookah_id} удален")
@@ -1096,7 +1265,7 @@ async def cmd_back_to_menu(callback: CallbackQuery):
     await callback.message.edit_text(
         "🏠 Главное меню\n\n"
         "Выберите действие:",
-        reply_markup=get_main_menu_keyboard(is_open, is_admin(callback.from_user.id))
+        reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
     )
     await callback.answer()
 
@@ -1129,7 +1298,7 @@ async def cmd_back_to_hookahs(callback: CallbackQuery):
         else:
             await callback.message.edit_text(
                 "📭 Нет кальянов.",
-                reply_markup=get_main_menu_keyboard(True, is_admin(callback.from_user.id))
+                reply_markup=get_main_menu_keyboard(is_admin(callback.from_user.id))
             )
     
     await callback.answer()

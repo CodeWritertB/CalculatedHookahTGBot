@@ -146,6 +146,8 @@ def init_db() -> None:
 
     # Дополняем таблицу users полем для уведомлений
     add_column_if_not_exists(conn, 'users', 'notifications_enabled INTEGER DEFAULT 1')
+    add_column_if_not_exists(conn, 'users', 'display_name TEXT')
+    add_column_if_not_exists(conn, 'users', 'global_role TEXT DEFAULT "member"')
 
     conn.commit()
     conn.close()
@@ -676,3 +678,146 @@ def get_username(user_id: int) -> Optional[str]:
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else None
+
+
+# ==================== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ ПРОФИЛЕМ ПОЛЬЗОВАТЕЛЯ ====================
+
+def get_user_profile(user_id: int) -> Optional[Tuple]:
+    """
+    Получить профиль пользователя.
+    
+    Returns:
+        Optional[Tuple]: (user_id, username, display_name, global_role) или None
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, username, display_name, global_role FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def get_user_display_name(user_id: int) -> str:
+    """Получить отображаемое имя пользователя или username."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT display_name, username FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row[0] or row[1] or f"User {user_id}"
+    return f"User {user_id}"
+
+
+def set_user_display_name(user_id: int, display_name: str) -> None:
+    """Установить отображаемое имя пользователя."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET display_name = ? WHERE user_id = ?",
+        (display_name if display_name else None, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_user_global_role(user_id: int) -> str:
+    """Получить глобальную роль пользователя."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT global_role FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else "member"
+
+
+def set_user_global_role(user_id: int, global_role: str) -> None:
+    """Установить глобальную роль пользователя."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET global_role = ? WHERE user_id = ?",
+        (global_role, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_users() -> List[Tuple]:
+    """Получить всех пользователей с их профилями."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, username, display_name, global_role FROM users ORDER BY created_at DESC"
+    )
+    users = cursor.fetchall()
+    conn.close()
+    return users
+
+
+def get_user_stats_full(user_id: int) -> dict:
+    """Получить полную статистику пользователя."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Профиль
+    cursor.execute(
+        "SELECT user_id, username, display_name, global_role FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    profile = cursor.fetchone()
+    
+    if not profile:
+        conn.close()
+        return {}
+    
+    # Всего кальянов добавлено
+    cursor.execute("SELECT COUNT(*) FROM hookahs WHERE created_by = ?", (user_id,))
+    total_hookahs = cursor.fetchone()[0] or 0
+    
+    # По типам
+    cursor.execute(
+        "SELECT hookah_type, COUNT(*) FROM hookahs WHERE created_by = ? GROUP BY hookah_type",
+        (user_id,)
+    )
+    hookah_types = {row[0]: row[1] for row in cursor.fetchall()}
+    
+    # Всего смен
+    cursor.execute(
+        "SELECT COUNT(DISTINCT shift_id) FROM shift_members WHERE user_id = ?",
+        (user_id,)
+    )
+    total_shifts = cursor.fetchone()[0] or 0
+    
+    # Смены в этом месяце
+    month_key = get_moscow_datetime().strftime('%Y-%m')
+    cursor.execute(
+        "SELECT COUNT(DISTINCT sm.shift_id) "
+        "FROM shift_members sm "
+        "JOIN shifts s ON sm.shift_id = s.id "
+        "WHERE sm.user_id = ? AND substr(s.open_time, 1, 7) = ?",
+        (user_id, month_key)
+    )
+    month_shifts = cursor.fetchone()[0] or 0
+    
+    conn.close()
+    
+    return {
+        'user_id': profile[0],
+        'username': profile[1],
+        'display_name': profile[2],
+        'global_role': profile[3],
+        'total_hookahs': total_hookahs,
+        'hookah_types': hookah_types,
+        'total_shifts': total_shifts,
+        'month_shifts': month_shifts
+    }
