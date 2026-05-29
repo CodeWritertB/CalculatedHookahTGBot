@@ -46,7 +46,9 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 BOT_OWNER_ID = int(getenv("ADMIN_USER_ID", "0") or 0)
+REPORT_CHAT_ID = int(getenv("REPORT_CHAT_ID", "0") or 0)
 logger.info(f"🔐 Админ ID из переменных окружения: {BOT_OWNER_ID}")
+logger.info(f"📣 Отчетовый чат из переменных окружения: {REPORT_CHAT_ID}")
 
 ROLE_LABELS = {
     'admin': 'Админ',
@@ -118,6 +120,74 @@ def get_work_schedule_text() -> str:
         f"Сегодня: {today_text}\n"
         f"Ожидаемая команда: {expected}"
     )
+
+
+def format_shift_report(shift: tuple, hookahs: list, members: list) -> str:
+    """Форматирование отчета по смене для отправки в общий чат."""
+    shift_id, open_time, close_time, is_open, total_hookahs = shift
+    status = "Открыта" if is_open else "Закрыта"
+    report = [
+        f"📊 Отчет по смене #{shift_id}",
+        f"Статус: {status}",
+        f"Открыта: {open_time}",
+        f"Закрыта: {close_time or '—'}",
+        f"Всего кальянов: {total_hookahs}",
+        "",
+        "👥 Участники смены:"
+    ]
+
+    if members:
+        for user_id, username, role, joined_at in members:
+            display_name = db.get_user_display_name(user_id)
+            username_text = f"@{username}" if username else ""
+            report.append(f"• {display_name} {username_text} — {role} (вступил: {joined_at})")
+    else:
+        report.append("• Нет участников")
+
+    report.append("")
+    report.append("🍃 Кальяны смены:")
+
+    if hookahs:
+        for h in hookahs:
+            hookah_id = h[0]
+            table_name = h[3]
+            hookah_type = h[2]
+            created_at = h[4]
+            status_label = STATUS_LABELS.get(h[5] if len(h) > 5 else 'new_order', 'Новый заказ')
+            strength = h[12] if len(h) > 12 else None
+            coldness = h[13] if len(h) > 13 else None
+            ready_at = h[9] if len(h) > 9 else None
+            timing = created_at
+            details = []
+            if strength is not None:
+                details.append(f"{strength}/10")
+            if coldness:
+                details.append(coldness)
+            if ready_at:
+                details.append(f"готов: {ready_at}")
+            detail_text = f" ({', '.join(details)})" if details else ""
+            report.append(f"• #{hookah_id} {table_name} — {hookah_type}, {status_label}{detail_text}, время: {timing}")
+    else:
+        report.append("• Кальянов нет")
+
+    return "\n".join(report)
+
+
+async def send_shift_report(bot, shift: tuple) -> None:
+    """Отправить отчет по смене в общий чат из переменных окружения."""
+    if REPORT_CHAT_ID == 0:
+        logger.warning("Отчетный чат не настроен: REPORT_CHAT_ID=0")
+        return
+
+    hookahs = db.get_hookahs_by_shift(shift[0])
+    members = db.get_shift_users(shift[0])
+    report_text = format_shift_report(shift, hookahs, members)
+
+    try:
+        await bot.send_message(REPORT_CHAT_ID, report_text)
+        logger.info(f"Отчет по смене #{shift[0]} отправлен в чат {REPORT_CHAT_ID}")
+    except Exception as exc:
+        logger.exception(f"Не удалось отправить отчет по смене #{shift[0]}: {exc}")
 
 
 async def notify_new_hookah(bot, hookah_id: int, hookah_type: str, table_name: str, shift_id: int) -> None:
@@ -358,7 +428,7 @@ async def cmd_confirm_close(callback: CallbackQuery):
     db.close_shift(shift[0])
     hookahs = db.get_hookahs_by_shift(shift[0])
     total = len(hookahs)
-    
+    await send_shift_report(callback.message.bot, shift)
     await callback.message.edit_text(
         f"✅ Смена успешно закрыта!\n\n"
         f"📊 Всего кальянов за смену: {total}\n"
@@ -971,6 +1041,7 @@ async def cmd_admin_close_specific_shift(callback: CallbackQuery):
         return
 
     db.close_shift(shift_id)
+    await send_shift_report(callback.message.bot, db.get_shift_by_id(shift_id))
     hookahs = db.get_hookahs_by_shift(shift_id)
 
     await callback.message.edit_text(
