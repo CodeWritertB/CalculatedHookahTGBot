@@ -235,15 +235,22 @@ async def notify_new_hookah(bot, hookah_id: int) -> None:
     message.append("Пожалуйста, подтвердите или начните работу.")
 
     text = "\n".join(message)
-    for user_id in db.get_users_with_notifications_enabled():
+    recipients = db.get_users_with_notifications_enabled()
+    logger.info(f"Hookah #{hookah_id}: sending new hookah notification to {len(recipients)} users with notifications enabled")
+    
+    sent = 0
+    for user_id in recipients:
         try:
             await bot.send_message(
                 user_id,
                 text,
                 reply_markup=get_new_hookah_notification_keyboard(hookah_id)
             )
-        except Exception:
+            sent += 1
+        except Exception as exc:
+            logger.debug(f"Failed to send new hookah notification to user {user_id}: {exc}")
             continue
+    logger.info(f"Hookah #{hookah_id}: sent new hookah notification to {sent}/{len(recipients)} users")
 
 
 async def notify_hookah_ready(bot, hookah_id: int) -> None:
@@ -265,24 +272,40 @@ async def notify_hookah_ready(bot, hookah_id: int) -> None:
     recipients = set(db.get_users_with_notifications_enabled())
     recipients.update(user_id for user_id, _, _, _ in db.get_shift_users(shift_id))
 
+    logger.info(f"Hookah #{hookah_id}: sending ready notification to {len(recipients)} recipients")
+    general_sent = 0
     for user_id in recipients:
         try:
             await bot.send_message(user_id, message)
-        except Exception:
+            general_sent += 1
+        except Exception as exc:
+            logger.debug(f"Failed to send ready message to user {user_id}: {exc}")
             continue
+    logger.info(f"Hookah #{hookah_id}: sent ready notification to {general_sent}/{len(recipients)} recipients")
 
     # Отправим отдельное уведомление кальянным мастерам смены (кроме того, кто пометил как готовый),
     # чтобы гарантированно оповестить мастера по залу.
     try:
         shift_users = db.get_shift_users(shift_id)
+        last_updated_by = hookah[11] if len(hookah) > 11 else None
+        logger.info(f"Hookah #{hookah_id}: sending 'ready' notification to hall masters. Found {len(shift_users)} users in shift")
+        
+        ready_attempted = 0
+        ready_sent = 0
         for user_id, username, role, joined_at in shift_users:
-            if role == 'hookah_master' and user_id != (hookah[11] if len(hookah) > 11 else None):
+            if role == 'hookah_master' and user_id != last_updated_by:
+                ready_attempted += 1
+                logger.info(f"Hookah #{hookah_id}: attempting to notify hall master {user_id} ({username})")
                 try:
                     await bot.send_message(user_id, f"🎯 Кальян #{hookah_id} готов к выдаче!\n{message}")
-                except Exception:
+                    ready_sent += 1
+                    logger.info(f"✅ Notified hall master {user_id} about ready hookah #{hookah_id}")
+                except Exception as exc:
+                    logger.warning(f"❌ Failed to notify hall master {user_id}: {exc}")
                     continue
-    except Exception:
-        pass
+        logger.info(f"Hookah #{hookah_id}: ready notifications - attempted={ready_attempted}, sent={ready_sent}")
+    except Exception as exc:
+        logger.exception(f"Error sending ready notifications for hookah #{hookah_id}: {exc}")
 
 
 async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) -> None:
@@ -323,17 +346,28 @@ async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) 
     try:
         from src.keyboards import get_ready_notification_keyboard
         shift_id = hookah[1]
-        for user_id, username, role, joined_at in db.get_shift_users(shift_id):
+        shift_users = db.get_shift_users(shift_id)
+        logger.info(f"Hookah #{hookah_id}: found {len(shift_users)} users in shift #{shift_id}")
+        
+        attempted = 0
+        sent = 0
+        for user_id, username, role, joined_at in shift_users:
+            logger.debug(f"Hookah #{hookah_id}: checking user {user_id} (username={username}, role={role})")
             if role == 'hookah_master' and user_id != accepted_by_user_id:
+                attempted += 1
+                logger.info(f"Hookah #{hookah_id}: attempting to send ready-button to master {user_id} ({username})")
                 try:
                     await bot.send_message(
                         user_id,
                         f"✅ Кальян #{hookah_id} принят в работу {accepted_by_label}.\nКогда кальян будет готов — нажмите кнопку ниже.",
                         reply_markup=get_ready_notification_keyboard(hookah_id)
                     )
+                    sent += 1
+                    logger.info(f"✅ Sent ready-button to master {user_id} for hookah #{hookah_id}")
                 except Exception as exc:
-                    logger.debug(f"Не удалось отправить уведомление мастеру {user_id}: {exc}")
+                    logger.warning(f"❌ Failed to send ready-button to master {user_id} for hookah #{hookah_id}: {exc}")
                     continue
+        logger.info(f"Hookah #{hookah_id}: ready-button notifications - attempted={attempted}, sent={sent}")
     except Exception as exc:
         logger.exception(f"Ошибка при отправке уведомлений мастерам для кальяна #{hookah_id}: {exc}")
 
