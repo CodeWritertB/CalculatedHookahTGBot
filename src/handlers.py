@@ -304,6 +304,23 @@ async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) 
         logger.info(f"Notification sent to report chat {REPORT_CHAT_ID} for accepted hookah #{hookah_id}")
     except Exception as exc:
         logger.exception(f"Не удалось отправить уведомление об принятии кальяна #{hookah_id}: {exc}")
+    # Отправляем уведомление остальным кальянным мастерам этой смены,
+    # чтобы они видели, что кальян принят, и могли нажать кнопку 'Готов' когда всё будет готово.
+    try:
+        shift_id = hookah[1]
+        for user_id, username, role, joined_at in db.get_shift_users(shift_id):
+            if role == 'hookah_master' and user_id != accepted_by_user_id:
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"✅ Кальян #{hookah_id} принят в работу {accepted_by_label}.\nКогда кальян будет готов — нажмите кнопку ниже.",
+                        reply_markup=get_hookah_actions_keyboard(hookah, 'hookah_master')
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        # Не критично если уведомление мастерам не отправилось
+        pass
 
 
 # ==================== FSM STATES (Состояния диалога) ====================
@@ -359,6 +376,9 @@ async def cmd_start(message: Message):
         message (Message): Объект сообщения от пользователя
     """
     user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.full_name or ""
+    # Регистрируем пользователя в БД при заходе, чтобы не требовать дополнительных действий
+    db.add_user_if_not_exists(user_id, username)
     logger.info(f"Пользователь {user_id} запросил /start; is_admin={is_admin(user_id)}")
     await message.answer(
         "🍃 Добро пожаловать в бот учета кальянов!\n\n"
