@@ -260,6 +260,7 @@ async def notify_hookah_ready(bot, hookah_id: int) -> None:
         "Статус: Готов к выдаче"
     )
 
+    # Сначала отправляем всем пользователям с включенными уведомлениями и участникам смены
     recipients = set(db.get_users_with_notifications_enabled())
     recipients.update(user_id for user_id, _, _, _ in db.get_shift_users(shift_id))
 
@@ -268,6 +269,19 @@ async def notify_hookah_ready(bot, hookah_id: int) -> None:
             await bot.send_message(user_id, message)
         except Exception:
             continue
+
+    # Отправим отдельное уведомление кальянным мастерам смены (кроме того, кто пометил как готовый),
+    # чтобы гарантированно оповестить мастера по залу.
+    try:
+        shift_users = db.get_shift_users(shift_id)
+        for user_id, username, role, joined_at in shift_users:
+            if role == 'hookah_master' and user_id != (hookah[11] if len(hookah) > 11 else None):
+                try:
+                    await bot.send_message(user_id, f"🎯 Кальян #{hookah_id} готов к выдаче!\n{message}")
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
 
 async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) -> None:
@@ -304,9 +318,9 @@ async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) 
         logger.info(f"Notification sent to report chat {REPORT_CHAT_ID} for accepted hookah #{hookah_id}")
     except Exception as exc:
         logger.exception(f"Не удалось отправить уведомление об принятии кальяна #{hookah_id}: {exc}")
-    # Отправляем уведомление остальным кальянным мастерам этой смены,
-    # чтобы они видели, что кальян принят, и могли нажать кнопку 'Готов' когда всё будет готово.
+    # Отправляем уведомление остальным кальянным мастерам этой смены
     try:
+        from src.keyboards import get_ready_notification_keyboard
         shift_id = hookah[1]
         for user_id, username, role, joined_at in db.get_shift_users(shift_id):
             if role == 'hookah_master' and user_id != accepted_by_user_id:
@@ -314,13 +328,13 @@ async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) 
                     await bot.send_message(
                         user_id,
                         f"✅ Кальян #{hookah_id} принят в работу {accepted_by_label}.\nКогда кальян будет готов — нажмите кнопку ниже.",
-                        reply_markup=get_hookah_actions_keyboard(hookah, 'hookah_master')
+                        reply_markup=get_ready_notification_keyboard(hookah_id)
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug(f"Не удалось отправить уведомление мастеру {user_id}: {exc}")
                     continue
-    except Exception:
-        # Не критично если уведомление мастерам не отправилось
-        pass
+    except Exception as exc:
+        logger.exception(f"Ошибка при отправке уведомлений мастерам для кальяна #{hookah_id}: {exc}")
 
 
 # ==================== FSM STATES (Состояния диалога) ====================

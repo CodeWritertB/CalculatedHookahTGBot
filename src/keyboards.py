@@ -242,6 +242,14 @@ def get_new_hookah_notification_keyboard(hookah_id: int) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_ready_notification_keyboard(hookah_id: int) -> InlineKeyboardMarkup:
+    """Получить клавиатуру уведомления с кнопкой пометить кальян готовым."""
+    buttons = [
+        [InlineKeyboardButton(text="🎯 Пометить готовым", callback_data=f"ready_{hookah_id}")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_profile_keyboard() -> InlineKeyboardMarkup:
     """Получить клавиатуру профиля пользователя."""
     buttons = [
