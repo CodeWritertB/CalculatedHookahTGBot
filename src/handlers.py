@@ -352,7 +352,7 @@ async def notify_hookah_accepted(bot, hookah_id: int, accepted_by_user_id: int) 
         attempted = 0
         sent = 0
         for user_id, username, role, joined_at in shift_users:
-            logger.debug(f"Hookah #{hookah_id}: checking user {user_id} (username={username}, role={role})")
+            logger.info(f"Hookah #{hookah_id}: user {user_id} ({username}) - role={role}, is_master={role=='hookah_master'}, not_acceptor={user_id != accepted_by_user_id}")
             if role == 'hookah_master' and user_id != accepted_by_user_id:
                 attempted += 1
                 logger.info(f"Hookah #{hookah_id}: attempting to send ready-button to master {user_id} ({username})")
