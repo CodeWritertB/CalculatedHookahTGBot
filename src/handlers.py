@@ -19,6 +19,7 @@ from os import getenv
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
@@ -991,11 +992,19 @@ async def cmd_profile(callback: CallbackQuery):
         f"Username: @{username}\n"
     )
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_profile_keyboard()
-    )
-    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_profile_keyboard()
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc):
+            # Игнорируем попытку редактирования без изменений
+            await callback.answer()
+        else:
+            raise
+    else:
+        await callback.answer()
 
 
 @router.callback_query(F.data == "profile_stats")
@@ -1028,11 +1037,18 @@ async def cmd_profile_stats(callback: CallbackQuery):
         f"В этом месяце: {stats['month_shifts']}\n"
     )
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_profile_keyboard()
-    )
-    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_profile_keyboard()
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc):
+            await callback.answer()
+        else:
+            raise
+    else:
+        await callback.answer()
 
 
 @router.callback_query(F.data == "admin_panel")
