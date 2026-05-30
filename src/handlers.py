@@ -963,7 +963,8 @@ async def cmd_join_shift(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or callback.from_user.full_name or ""
     db.add_user_if_not_exists(user_id, username)
-    success, msg = db.assign_user_to_shift(shift[0], user_id, "member")
+    global_role = db.get_user_global_role(user_id)
+    success, msg = db.assign_user_to_shift(shift[0], user_id, global_role)
     if not success:
         await callback.message.edit_text(f"⚠️ {msg}")
         await callback.answer()
@@ -974,7 +975,7 @@ async def cmd_join_shift(callback: CallbackQuery):
         reply_markup=get_main_menu_keyboard(is_admin(user_id))
     )
     await callback.answer()
-    logger.info(f"User {user_id} joined shift #{shift[0]} as member")
+    logger.info(f"User {user_id} joined shift #{shift[0]} as {global_role}")
 
 
 @router.callback_query(F.data == "take_manager")
